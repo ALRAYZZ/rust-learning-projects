@@ -54,13 +54,25 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     match args.command {
         Commands::Add { title, description } => {
+            let mut tasks = load_tasks()?;
+            // Convert into iterator, map projects(extracts) the id field from each task
+            // max returns an option of either the max value of task.ids or None if no tasks exist
+            // then we have unwrap_or(0) to return 0 if no tasks exist, and add 1 to get the next id
+            let next_id = tasks
+                .iter()
+                .map(|task| task.id)
+                .max().unwrap_or(0) + 1;
+
             let new_task = Task {
-                id: 0,
+                id: next_id,
                 title,
                 description,
                 completed: false,
             };
-            println!("Adding {} task as: {}", new_task.description, new_task.title);
+
+            tasks.push(new_task);
+            save_tasks(&tasks)?; // Passing reference is more performant and a default in Rust
+            println!("Task added successfully with ID: {}", next_id);
             Ok(())
         }
         Commands::List => {
@@ -108,6 +120,8 @@ fn load_tasks() -> Result<Vec<Task>, Box<dyn std::error::Error>> {
     Ok(tasks)
 }
 
+// Even if we don't do anything else with the task created on main, we still pass a reference
+// it's faster than passing ownership and allowing the compiler to optimize memory usage
 fn save_tasks(tasks: &Vec<Task>) -> Result<(), Box<dyn std::error::Error>> {
     let file = File::create(TODO_FILE)?; // If file does not exist, create it
     let writer = BufWriter::new(file);
