@@ -49,7 +49,7 @@ struct Task {
     completed: bool
 }
 
-fn main() {
+fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = Cli::parse();
 
     match args.command {
@@ -61,15 +61,30 @@ fn main() {
                 completed: false,
             };
             println!("Adding {} task as: {}", new_task.description, new_task.title);
+            Ok(())
         }
         Commands::List => {
-            println!("Listing all tasks");
+            let tasks = load_tasks()?;
+            if tasks.is_empty() {
+                println!("No tasks found");
+            } else {
+                for task in tasks {
+                    let status = if task.completed { "[✓]" } else { "[ ]" };
+                    println!(
+                        "{} ID: {} - Title: {} | Description: {}",
+                        status, task.id, task.title, task.description
+                    );
+                }
+            }
+            Ok(())
         }
         Commands::Complete { id } => {
             println!("Marking task {} as completed", id);
+            Ok(())
         }
         Commands::Remove { id } => {
             println!("Removing task {}", id);
+            Ok(())
         }
     }
 }
