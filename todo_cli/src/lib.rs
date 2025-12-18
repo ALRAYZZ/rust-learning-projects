@@ -5,24 +5,67 @@ use std::fs::File;
 use std::io::{BufReader, BufWriter};
 use std::path::Path;
 
+// Constant holding the name of the JSON file to store tasks
+pub const TODO_FILE: &str = "todo.json";
 
-pub struct TodoList {
+// Trait defining the interface for different storage backends
+pub trait TodoStorage {
+    fn load(&self) -> Result<Vec<Task>, Box<dyn std::error::Error>>;
+    fn save(&self, tasks: &Vec<Task>) -> Result<(), Box<dyn std::error::Error>>;
+}
+
+// JSON file storage implementation of TodoStorage trait
+pub struct JsonFileStorage {
+    file_path: String,
+}
+
+impl JsonFileStorage {
+pub fn new(file_path: String) -> Self {
+        Self { file_path }
+    }
+}
+
+// I/O operations for JSON file storage
+impl TodoStorage for JsonFileStorage {
+    fn load(&self) -> Result<Vec<Task>, Box<dyn std::error::Error>> {
+        let path = Path::new(&self.file_path);
+        if !path.exists() {
+            return Ok(Vec::new());
+        }
+        let file = File::open(path)?;
+        let reader = BufReader::new(file);
+        let tasks: Vec<Task> = serde_json::from_reader(reader)?;
+        Ok(tasks)
+    }
+
+    fn save(&self, tasks: &Vec<Task>) -> Result<(), Box<dyn std::error::Error>> {
+        let file = File::create(&self.file_path)?;
+        let writer = BufWriter::new(file);
+        serde_json::to_writer_pretty(writer, &tasks)?;
+        Ok(())
+    }
+}
+
+
+pub struct TodoList<S: TodoStorage> {
+    storage: S,
     tasks: Vec<Task>,
 }
 
 // Represents the in memory list of tasks with methods to manipulate it
 // and perform I/O operations
-impl TodoList {
+impl<S: TodoStorage> TodoList<S> {
     // Load from file into TodoList
     // Returns a Result with either the TodoList struct or an error
-    pub fn load() -> Result<Self, Box<dyn std::error::Error>> {
-        let tasks = load_tasks()?;
-        Ok(Self { tasks })
+    pub fn load(storage: S) -> Result<Self, Box<dyn std::error::Error>> {
+        // Calls load method based on the storage type we passed (JSON file in this case)
+        let tasks = storage.load()?;
+        Ok(Self { tasks, storage })
     }
 
     // Internal save
     fn save(&self) -> Result<(), Box<dyn std::error::Error>> {
-        save_tasks(&self.tasks)
+        self.storage.save(&self.tasks)
     }
 
     // Add a task to the in memory vector and save to file
@@ -176,7 +219,14 @@ pub struct Cli {
     pub command: Commands,
 }
 
-pub const TODO_FILE: &str = "todo.json";
+
+
+
+
+
+
+// (NOT IN USE) I/O functions for loading and saving tasks to JSON file
+// KEPT FOR STUDY PURPOSES
 
 // We need to return Box<dyn std::error::Error> because serde_json::from_reader
 // can return different error types. Saying to compiler that we can return some kind of error
