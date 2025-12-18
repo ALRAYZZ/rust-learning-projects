@@ -106,8 +106,38 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         }
         Commands::Remove { id } => {
-            println!("Removing task {}", id);
-            Ok(())
+            let mut tasks = load_tasks()?;
+
+            // APPROACH USING POSITION AND REMOVE
+            // Is more performant than retain because we stop searching once we find the task
+            // also allows us to give better feedback to user
+            // But in reality the IO operations are the bottleneck, so performance difference is negligible
+            if let Some(task) = tasks.iter().position(|task| task.id == id) {
+                tasks.remove(task);
+                save_tasks(&tasks)?;
+                println!("Task {} removed successfully", id);
+                Ok(())
+            } else {
+                Err(format!("Task {} not found", id).into())
+            }
+
+            // APPROACH USING RETAIN
+
+            // Retain method doesn't return success or failure, it just modifies the vector in place
+            // So we need a way to know if we actually removed something
+            // We can get and before and after length of the vector
+            //let original_len = tasks.len();
+            // Keep on the vector only the tasks that do not match the id to remove
+            //tasks.retain(|task| task.id != id);
+
+            // If original length is the same as current length, means we didn't remove anything
+            //if original_len == tasks.len() {
+                //return Err(format!("Task {} not found", id).into());
+            //}
+
+            //save_tasks(&tasks)?;
+            //println!("Task {} removed successfully", id);
+            //Ok(())
         }
     }
 }
