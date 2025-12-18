@@ -91,8 +91,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             Ok(())
         }
         Commands::Complete { id } => {
-            println!("Marking task {} as completed", id);
-            Ok(())
+            let mut tasks = load_tasks()?;
+            // Find method returns an Options, so we can combine it with an if let pattern
+            // so we are checking if it returned Some(task), means we found the task with that id
+            // then do something with it
+            // The find method syntax is like saying: Find a task where task.id equals the id passed
+            if let Some(task) = tasks.iter_mut().find(|task| task.id == id) {
+                task.completed = true;
+                save_tasks(&tasks)?;
+                println!("Task {} marked as completed", id);
+                Ok(())
+            } else {
+                Err(format!("Task {} not found", id).into())
+            }
         }
         Commands::Remove { id } => {
             println!("Removing task {}", id);
