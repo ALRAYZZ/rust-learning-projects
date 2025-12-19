@@ -257,3 +257,112 @@ pub fn save_tasks(tasks: &Vec<Task>) -> Result<(), Box<dyn std::error::Error>> {
 }
 
 
+#[cfg(test)]
+mod tests {
+    use crate::{Task, TodoList, TodoStorage};
+
+    // Mock storage struct for testing purposes
+    struct MockStorage {
+        initial_tasks: Vec<Task>, // Allows pre-populating tasks for load tests
+        save_called: std::cell::RefCell<bool> // Tracks if save was called
+    }
+
+    impl MockStorage {
+        fn new(initial_tasks: Vec<Task>) -> Self {
+            Self {
+                initial_tasks,
+                save_called: std::cell::RefCell::new(false),
+            }
+        }
+
+        fn was_save_called(&self) -> bool {
+            *self.save_called.borrow()
+        }
+    }
+
+    impl TodoStorage for MockStorage {
+        fn load(&self) -> Result<Vec<Task>, Box<dyn std::error::Error>> {
+            Ok(self.initial_tasks.clone())
+        }
+
+        fn save(&self, _tasks: &Vec<Task>) -> Result<(), Box<dyn std::error::Error>> {
+            *self.save_called.borrow_mut() = true;
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn test_find_next_id_empty_list() {
+        let tasks: Vec<Task> = vec![];
+        assert_eq!(Task::find_next_id(&tasks), 1);
+    }
+
+    #[test]
+    fn test_find_next_id_with_tasks() {
+        let tasks = vec![
+            Task::new(1, "A".to_string(), "".to_string()),
+            Task::new(3, "B".to_string(), "".to_string()), // gap to text max, not length
+        ];
+        assert_eq!(Task::find_next_id(&tasks), 4);
+    }
+
+    #[test]
+    fn test_load_with_initial_tasks() {
+        let initial = vec![Task::new(1, "Test".to_string(), "Desc".to_string())];
+        let storage = MockStorage::new(initial.clone());
+        let todo_list = TodoList::load(storage).unwrap();
+        assert_eq!(todo_list.tasks.len(), 1);
+        assert_eq!(todo_list.tasks[0].title, "Test");
+    }
+
+    #[test]
+    fn test_add_task_success() {
+        let storage = MockStorage::new(vec![]);
+        let mut todo_list = TodoList::load(storage).unwrap();
+        let next_id = todo_list.add("New Task".to_string(), "Desc".to_string()).unwrap();
+        assert_eq!(next_id, 1);
+        assert_eq!(todo_list.tasks.len(), 1);
+        assert_eq!(todo_list.tasks[0].title, "New Task");
+        assert!(todo_list.storage.was_save_called());
+    }
+
+    #[test]
+    fn test_complete_existing_task() {
+        let initial = vec![Task::new(1, "Test".to_string(), "Desc".to_string())];
+        let storage = MockStorage::new(initial);
+        let mut todo_list = TodoList::load(storage).unwrap();
+        todo_list.complete(1).unwrap();
+        assert!(todo_list.tasks[0].completed);
+        assert!(todo_list.storage.was_save_called());
+    }
+
+    #[test]
+    fn test_complete_nonexistent_task() {
+        let storage = MockStorage::new(vec![]);
+        let mut todo_list = TodoList::load(storage).unwrap();
+        let result = todo_list.complete(999);
+        assert!(result.is_err());
+        assert!(!todo_list.storage.was_save_called());
+    }
+
+    #[test]
+    fn test_remove_existing_task() {
+        let initial = vec![Task::new(1, "Test".to_string(), "Desc".to_string())];
+        let storage = MockStorage::new(initial);
+        let mut todo_list = TodoList::load(storage).unwrap();
+        todo_list.remove(1).unwrap();
+        assert_eq!(todo_list.tasks.len(), 0);
+        assert!(todo_list.storage.was_save_called());
+    }
+
+    #[test]
+    fn test_remove_nonexistent_task() {
+        let storage = MockStorage::new(vec![]);
+        let mut todo_list = TodoList::load(storage).unwrap();
+        let result = todo_list.remove(999);
+        assert!(result.is_err());
+        assert!(!todo_list.storage.was_save_called());
+    }
+}
+
+
