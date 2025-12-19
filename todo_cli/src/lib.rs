@@ -20,7 +20,8 @@ pub struct JsonFileStorage {
 }
 
 impl JsonFileStorage {
-pub fn new(file_path: String) -> Self {
+pub fn new() -> Self {
+        let file_path = std::env::var("TODO_FILE").ok().unwrap_or_else(|| TODO_FILE.to_string());
         Self { file_path }
     }
 }
@@ -33,6 +34,13 @@ impl TodoStorage for JsonFileStorage {
             return Ok(Vec::new());
         }
         let file = File::open(path)?;
+        let metadata = file.metadata()?;
+
+        // Handle empty files
+        if metadata.len() == 0 {
+            return Ok(Vec::new());
+        }
+
         let reader = BufReader::new(file);
         let tasks: Vec<Task> = serde_json::from_reader(reader)?;
         Ok(tasks)

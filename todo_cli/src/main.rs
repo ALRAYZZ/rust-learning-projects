@@ -4,7 +4,7 @@ use clap::Parser;
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = Cli::parse();
     // Initialize storage backend (JSON file in this case)
-    let storage = JsonFileStorage::new(TODO_FILE.to_string());
+    let storage = JsonFileStorage::new();
     // Load tasks from file into memory using the storage backend
     let mut todo_list = TodoList::load(storage)?;
 
