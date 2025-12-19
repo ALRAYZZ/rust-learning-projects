@@ -1,4 +1,4 @@
-use assert_cmd::prelude::*; // Brings in cargo_bin! macro
+use assert_cmd::prelude::*;
 use predicates::prelude::*;
 use std::process::Command;
 use tempfile::NamedTempFile;
