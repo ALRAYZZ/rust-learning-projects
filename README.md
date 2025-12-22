@@ -1,1 +1,1 @@
-Bundle of projects, not intended for production but for learning purposes with study notes on it is source files.
+Repository for learning projects. Contains only Rust projects used for learning not only the language itself, but the technologies that Rust is suited for. Projects with study notations.
