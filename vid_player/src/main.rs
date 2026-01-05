@@ -24,6 +24,15 @@ impl Default for App {
 }
 
 impl ApplicationHandler for App {
+    fn new_events(&mut self, event_loop: &dyn ActiveEventLoop, cause: StartCause) {
+        if matches!(cause, StartCause::Init) {
+            // Initial redraw after window creation
+            if let Some(window) = &self.window {
+                window.request_redraw();
+            }
+        }
+    }
+
     fn can_create_surfaces(&mut self, event_loop: &dyn ActiveEventLoop) {
         // Event loop has started, we can initialize our window now
 
@@ -59,11 +68,37 @@ impl ApplicationHandler for App {
                 println!("The close button was pressed; stopping");
                 event_loop.exit();
             },
+            WindowEvent::SurfaceResized(new_size) => {
+                if let Some(pixels) = self.pixels.as_mut() {
+                    let _ = pixels.resize_surface(new_size.width, new_size.height);
+                }
+            }
             WindowEvent::RedrawRequested =>  {
                 // Redraw the app
+                if let (Some(pixels),
+                    Some(window)) = (&mut self.pixels, &self.window) {
 
-                self.window.as_ref().unwrap().request_redraw();
-            },
+                    let frame = pixels.frame_mut();
+
+                    // Fill the frame with a solid color
+                    for chunk in frame.chunks_exact_mut(4) {
+                        chunk[0] = 0x99; // Red
+                        chunk[1] = 0x22; // Green
+                        chunk[2] = 0x22; // Blue
+                        chunk[3] = 0xff; // Alpha
+                    }
+
+                    // For a gradient use indices
+                    if let Err(err) = pixels.render() {
+                        eprintln!("pixels.render() failed: {:?}", err);
+                        event_loop.exit();
+                        return;
+                    }
+
+                    window.request_redraw(); // Queue next frame
+                }
+
+            }
             _ => {}
         }
     }
