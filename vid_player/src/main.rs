@@ -5,6 +5,8 @@ use winit::dpi::LogicalSize;
 use winit::event::{StartCause, WindowEvent};
 use winit::event_loop::{ControlFlow, EventLoop, ActiveEventLoop};
 use winit::window::{Window, WindowAttributes, WindowId};
+use image::{DynamicImage, ImageBuffer, Rgba};
+use std::path::Path;
 
 const WIDTH: u32 = 320;
 const HEIGHT: u32 = 240;
@@ -12,6 +14,7 @@ const HEIGHT: u32 = 240;
 struct App {
     window: Option<Arc<Box<dyn Window>>>,
     pixels: Option<Pixels<'static>>,
+    frame_data: Option<Vec<u8>> // Store preloaded RGBA bytes
 }
 
 impl Default for App {
@@ -19,6 +22,7 @@ impl Default for App {
         Self {
             window: None,
             pixels: None,
+            frame_data: None
         }
     }
 }
@@ -53,6 +57,21 @@ impl ApplicationHandler for App {
 
         let pixels = Pixels::new(WIDTH, HEIGHT, surface_texture).unwrap();
 
+        // Load and prepare image ONCE
+        let img_path = Path::new("test_image.png");
+        let img: DynamicImage = image::open(img_path).expect("Failed to open test image");
+
+        // Resize image
+        let resized_img = img.resize_exact(
+            WIDTH, HEIGHT, image::imageops::FilterType::Lanczos3);
+
+        // Convert to RGBA8
+        let  rgba: ImageBuffer<Rgba<u8>, Vec<u8>> = resized_img.to_rgba8();
+        let bytes: Vec<u8> = rgba.into_raw();
+
+        self.frame_data = Some(bytes);
+
+
         self.window = Some(window);
         self.pixels = Some(pixels);
     }
@@ -76,31 +95,15 @@ impl ApplicationHandler for App {
             WindowEvent::RedrawRequested =>  {
                 // Redraw the app
                 if let (Some(pixels),
-                    Some(window)) = (&mut self.pixels, &self.window) {
+                    Some(window),
+                    Some(frame_data)) = (
+                    &mut self.pixels, &self.window, &self.frame_data
+                ) {
 
                     let frame = pixels.frame_mut();
 
-                    // Loading static image at compile time for demonstration
-                    let img = image::load_from_memory(
-                        include_bytes!("../test_image.png"))
-                        .expect("Failed to load image");
-
-                    // Resize image
-                    let resized_img = img.resize_exact(
-                        WIDTH, HEIGHT, image::imageops::FilterType::Lanczos3);
-
-                    // Convert to RGBA8
-                    let rgba_img = resized_img.to_rgba8();
-
-                    let img_size = rgba_img.dimensions();
-                    let img_bytes = rgba_img.into_raw();
-
-
-                    // Ensure the image matches buffer size
-                    assert_eq!((WIDTH, HEIGHT), img_size, "Image size must match WIDTH x HEIGHT");
-                    assert_eq!(frame.len(), img_bytes.len());
-
-                    frame.copy_from_slice(&img_bytes);
+                    // Copy preloaded frame data into pixel buffer every frame
+                    frame.copy_from_slice(frame_data);
 
                     if let Err(err) = pixels.render() {
                         eprintln!("pixels.render() failed: {:?}", err);
