@@ -6,3 +6,4 @@ edition = "2024"
 [dependencies]
 winit = "0.31.0-beta.2"
 pixels = "0.15.0"
+image = "0.25.9"

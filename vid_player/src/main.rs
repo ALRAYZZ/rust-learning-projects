@@ -80,15 +80,28 @@ impl ApplicationHandler for App {
 
                     let frame = pixels.frame_mut();
 
-                    // Fill the frame with a solid color
-                    for chunk in frame.chunks_exact_mut(4) {
-                        chunk[0] = 0x99; // Red
-                        chunk[1] = 0x22; // Green
-                        chunk[2] = 0x22; // Blue
-                        chunk[3] = 0xff; // Alpha
-                    }
+                    // Loading static image at compile time for demonstration
+                    let img = image::load_from_memory(
+                        include_bytes!("../test_image.png"))
+                        .expect("Failed to load image");
 
-                    // For a gradient use indices
+                    // Resize image
+                    let resized_img = img.resize_exact(
+                        WIDTH, HEIGHT, image::imageops::FilterType::Lanczos3);
+
+                    // Convert to RGBA8
+                    let rgba_img = resized_img.to_rgba8();
+
+                    let img_size = rgba_img.dimensions();
+                    let img_bytes = rgba_img.into_raw();
+
+
+                    // Ensure the image matches buffer size
+                    assert_eq!((WIDTH, HEIGHT), img_size, "Image size must match WIDTH x HEIGHT");
+                    assert_eq!(frame.len(), img_bytes.len());
+
+                    frame.copy_from_slice(&img_bytes);
+
                     if let Err(err) = pixels.render() {
                         eprintln!("pixels.render() failed: {:?}", err);
                         event_loop.exit();
