@@ -1,5 +1,6 @@
 use pixels::{Error, Pixels, SurfaceTexture};
 use winit::application::ApplicationHandler;
+use std::sync::Arc;
 use winit::dpi::LogicalSize;
 use winit::event::{StartCause, WindowEvent};
 use winit::event_loop::{ControlFlow, EventLoop, ActiveEventLoop};
@@ -8,9 +9,18 @@ use winit::window::{Window, WindowAttributes, WindowId};
 const WIDTH: u32 = 320;
 const HEIGHT: u32 = 240;
 
-#[derive(Default)]
 struct App {
-    window: Option<Box<dyn Window>>,
+    window: Option<Arc<Box<dyn Window>>>,
+    pixels: Option<Pixels<'static>>,
+}
+
+impl Default for App {
+    fn default() -> Self {
+        Self {
+            window: None,
+            pixels: None,
+        }
+    }
 }
 
 impl ApplicationHandler for App {
@@ -18,7 +28,24 @@ impl ApplicationHandler for App {
         // Event loop has started, we can initialize our window now
 
         // Create simple window with default attributes
-        self.window = Some(event_loop.create_window(WindowAttributes::default()).unwrap())
+        let window_attributes = WindowAttributes::default()
+            .with_surface_size(LogicalSize::new(WIDTH, HEIGHT))
+            .with_title("Rust Video Player");
+
+        let window = event_loop.create_window(window_attributes).unwrap();
+        let window = Arc::new(window);
+        let window_size = window.surface_size();
+
+        let surface_texture = SurfaceTexture::new(
+            window_size.width,
+            window_size.height,
+            window.clone()
+        );
+
+        let pixels = Pixels::new(WIDTH, HEIGHT, surface_texture).unwrap();
+
+        self.window = Some(window);
+        self.pixels = Some(pixels);
     }
 
     fn window_event(
