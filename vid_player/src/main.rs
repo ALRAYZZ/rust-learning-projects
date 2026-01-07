@@ -101,19 +101,39 @@ impl ApplicationHandler for App {
 
         let pixels = Pixels::new(WIDTH, HEIGHT, surface_texture).unwrap();
 
-        // Load and prepare image ONCE
-        let img_path = Path::new("test_image.png");
-        let img: DynamicImage = image::open(img_path).expect("Failed to open test image");
+        // Load GIF file
+        let gif_path = Path::new("test_animation.gif");
+        let gif_file = std::fs::File::open(gif_path).expect("Failed to open GIF file");
+        let mut decoder = gif::DecodeOptions::new();
+        decoder.set_color_output(gif::ColorOutput::RGBA);
+        let mut decoder = decoder.read_info(gif_file).expect("Failed to read GIF info");
 
-        // Resize image
-        let resized_img = img.resize_exact(
-            WIDTH, HEIGHT, image::imageops::FilterType::Lanczos3);
+        // Extract all frames
+        let mut frames = Vec::new();
+        while let Some(frame) = decoder.read_next_frame().expect("Failed to read frame") {
+            // Resize frame to target dimensions
+            let img = image::RgbaImage::from_raw(
+                frame.width as u32,
+                frame.height as u32,
+                frame.buffer.to_vec()
+            ).expect("Invalid frame data");
 
-        // Convert to RGBA8
-        let  rgba: ImageBuffer<Rgba<u8>, Vec<u8>> = resized_img.to_rgba8();
-        let bytes: Vec<u8> = rgba.into_raw();
+            let resized = image::imageops::resize(
+                &img,
+                WIDTH,
+                HEIGHT,
+                image::imageops::FilterType::Lanczos3
+            );
 
-        self.frame_source= Some(FrameSource::StaticImage { frame: bytes });
+            frames.push(resized.into_raw());
+        }
+
+        self.frame_source = Some(FrameSource::Video {
+            frames,
+            current: 0,
+            fps: 10.0,  // Adjust
+            last_frame_time: std::time::Instant::now(),
+        });
 
 
         self.window = Some(window);
@@ -165,6 +185,10 @@ impl ApplicationHandler for App {
                         event_loop.exit();
                         return;
                     }
+
+                    // This creates the continuous rendering loop
+                    // Else only when resizing or OS calls it we would redraw
+                    window.request_redraw();
                 }
 
 
