@@ -12,7 +12,7 @@ const WIDTH: u32 = 320;
 const HEIGHT: u32 = 240;
 
 struct App {
-    window: Option<Arc<Box<dyn Window>>>,
+    window: Option<Arc<Box<dyn Window>>>, // We use Arc because window is shared with Pixels and App
     pixels: Option<Pixels<'static>>,
     frame_data: Option<Vec<u8>> // Store preloaded RGBA bytes
 }
@@ -27,6 +27,7 @@ impl Default for App {
     }
 }
 
+// ApplicationHandler is how winit talks back to the app when events happen
 impl ApplicationHandler for App {
     fn new_events(&mut self, event_loop: &dyn ActiveEventLoop, cause: StartCause) {
         if matches!(cause, StartCause::Init) {
@@ -45,6 +46,7 @@ impl ApplicationHandler for App {
             .with_surface_size(LogicalSize::new(WIDTH, HEIGHT))
             .with_title("Rust Video Player");
 
+        // We are not creating the window, but asking for winit to create it now that is safe
         let window = event_loop.create_window(window_attributes).unwrap();
         let window = Arc::new(window);
         let window_size = window.surface_size();
@@ -131,6 +133,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     event_loop.set_control_flow(ControlFlow::Poll);
 
     // Launch and begin running the event loop
+    // We give control to winit, and it will manage the calls of the implemented methods
     event_loop.run_app(App::default())?;
 
     Ok(())
