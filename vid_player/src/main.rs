@@ -1,3 +1,6 @@
+use std::collections::VecDeque;
+use std::thread;
+use crossbeam_channel::{bounded, Receiver, Sender};
 use pixels::{Error, Pixels, SurfaceTexture};
 use winit::application::ApplicationHandler;
 use std::sync::Arc;
@@ -5,11 +8,12 @@ use winit::dpi::LogicalSize;
 use winit::event::{StartCause, WindowEvent};
 use winit::event_loop::{ControlFlow, EventLoop, ActiveEventLoop};
 use winit::window::{Window, WindowAttributes, WindowId};
-use image::{DynamicImage, Frame, ImageBuffer, Rgba};
 use std::path::Path;
 
 const WIDTH: u32 = 320;
 const HEIGHT: u32 = 240;
+const FRAME_BUFFER_SIZE: usize = 30; // Buffer 30 frames ahead to avoid stutter
+
 
 // Enum abstraction for different frame sources
 enum FrameSource {
@@ -17,8 +21,9 @@ enum FrameSource {
         frame: Vec<u8>,
     },
     Video {
-        frames: Vec<Vec<u8>>,
-        current: usize,
+        frame_receiver: Receiver<Vec<u8>>, // Receives decoded frames from worker thread
+        frame_buffer: VecDeque<Vec<u8>>, // Ring buffer to hold decoded frames
+        current_frame: Vec<u8>, // Current frame being displayed
         fps: f32,
         last_frame_time: std::time::Instant,
     }
@@ -31,9 +36,9 @@ struct App {
 }
 
 impl App {
-    // This method determines the current frame to display based on the frame source
-    // We avoid passing the whole app struct to prevent multiple mutable borrows
-    // We just pass the frame source mutable reference
+    // Determines current frame to display based on frame source
+    // Static: Returns the same frame
+    // Video: Advances frame when enough time has passed based on fps
     fn current_frame(frame_source: &mut Option<FrameSource>) -> Option<&[u8]> {
         match frame_source.as_mut()? {
             FrameSource::StaticImage {frame} => {
@@ -41,21 +46,121 @@ impl App {
             }
 
             FrameSource::Video {
-                frames,
-                current,
+                frame_receiver,
+                frame_buffer,
+                current_frame,
                 fps,
                 last_frame_time,
             } => {
-                let frame_duration = std::time::Duration::from_secs_f32(1.0 / *fps);
-
-                if last_frame_time.elapsed() >= frame_duration {
-                    *current = (*current + 1) % frames.len();
-                    *last_frame_time = std::time::Instant::now();
+                // Refill buffer from decoder thread if space available
+                while frame_buffer.len() < FRAME_BUFFER_SIZE {
+                    match frame_receiver.try_recv() {
+                        Ok(new_frame) => frame_buffer.push_back(new_frame),
+                            Err(_) => break,
+                    }
                 }
 
-                Some(&frames[*current])
+                // Check if enough time has passed to advance next frame
+                let frame_duration = std::time::Duration::from_secs_f32(1.0 / *fps);
+
+                if last_frame_time.elapsed() > frame_duration {
+                    // Try to get next frame from buffer
+                    if let Some(next_frame) = frame_buffer.pop_front() {
+                        *current_frame = next_frame;
+                        *last_frame_time = std::time::Instant::now();
+                    }
+                }
+
+                Some(current_frame)
             }
         }
+    }
+
+    // Spawns a background thread that decodes video frames and sends them to main thread
+    // This architecture solves lifetime issues by:
+    // 1. Creating all FFmpeg objects in worker thread
+    // 2. Decoding frames sequentially with packed feeding
+    // 3. Converting YUV -> RGBA using FFmpeg scaler
+    // 4. Sending fully-owned Vec<u8> through channel
+    fn spawn_video_decoder(video_path: &Path, sender: Sender<Vec<u8>>) {
+        let video_path = video_path.to_path_buf();
+
+        thread::spawn(move || {
+            // Initialize FFmpeg
+            ffmpeg_next::init().expect("Failed to initialize FFmpeg");
+
+            // Open video file and find video stream
+            let mut ictx = ffmpeg_next::format::input(&video_path)
+                .expect("Failed to open video file");
+
+            let video_stream = ictx
+                .streams()
+                .best(ffmpeg_next::media::Type::Video)
+                .expect("No video stream found");
+
+            let video_stream_index = video_stream.index();
+
+            // Create decoder for the video stream
+            let context_decoder = ffmpeg_next::codec::context::Context::from_parameters(
+                video_stream.parameters()
+            ).expect("Failed to create codec context");
+
+            let mut decoder = context_decoder
+                .decoder()
+                .video()
+                .expect("Failed to create video decoder");
+
+            // Create scaler to convert YUV -> RGBA and resizse to target dimensions
+            let mut scaler = ffmpeg_next::software::scaling::Context::get(
+                decoder.format(),
+                decoder.width(),
+                decoder.height(),
+                ffmpeg_next::format::Pixel::RGBA,
+                WIDTH,
+                HEIGHT,
+                ffmpeg_next::software::scaling::flag::Flags::BILINEAR
+            ).expect("Failed to create scaler");
+
+            // Decode loop: read packets -> send decoder -> receive frames -> convert -> send
+            for (stream, packet) in ictx.packets() {
+                // Only process packets from video stream
+                if stream.index() == video_stream_index {
+                    // Send packet to decoder
+                    decoder.send_packet(&packet).expect("Failed to send packet");
+
+                    // Receive all available decoded frames
+                    let mut decoded_frame = ffmpeg_next::util::frame::video::Video::empty();
+                    while decoder.receive_frame(&mut decoded_frame).is_ok() {
+                        // Create empty frame for scaled output
+                        let mut rgb_frame = ffmpeg_next::util::frame::video::Video::empty();
+
+                        // Scale and convert to RGBA
+                        scaler.run(&decoded_frame, &mut rgb_frame)
+                            .expect("Failed to scale frame");
+
+                        // Copy RGBA data to owned Vec
+                        let data = rgb_frame.data(0);
+                        let frame_data = data.to_vec();
+
+                        // Send to main thread (blocks if buffer full)
+                        if sender.send(frame_data).is_err() {
+                            // Main thread deopped receiver, stop decoding
+                            return;
+                        }
+                    }
+                }
+            }
+
+            // Flush decoder to get remaing frames
+            decoder.send_eof().ok();
+            let mut decoded_frame = ffmpeg_next::util::frame::video::Video::empty();
+            while decoder.receive_frame(&mut decoded_frame).is_ok() {
+                let mut rgb_frame = ffmpeg_next::util::frame::video::Video::empty();
+                scaler.run(&decoded_frame, &mut rgb_frame).ok();
+                let data = rgb_frame.data(0);
+                sender.send(data.to_vec()).ok();
+            }
+        });
     }
 }
 
@@ -80,6 +185,7 @@ impl ApplicationHandler for App {
         }
     }
 
+    // This method is called by winit when the evnet loop has started
     fn can_create_surfaces(&mut self, event_loop: &dyn ActiveEventLoop) {
         // Event loop has started, we can initialize our window now
 
@@ -93,6 +199,7 @@ impl ApplicationHandler for App {
         let window = Arc::new(window);
         let window_size = window.surface_size();
 
+        // Create pixel buffer (Pixels) for rendering
         let surface_texture = SurfaceTexture::new(
             window_size.width,
             window_size.height,
@@ -101,37 +208,34 @@ impl ApplicationHandler for App {
 
         let pixels = Pixels::new(WIDTH, HEIGHT, surface_texture).unwrap();
 
-        // Load GIF file
-        let gif_path = Path::new("test_animation.gif");
-        let gif_file = std::fs::File::open(gif_path).expect("Failed to open GIF file");
-        let mut decoder = gif::DecodeOptions::new();
-        decoder.set_color_output(gif::ColorOutput::RGBA);
-        let mut decoder = decoder.read_info(gif_file).expect("Failed to read GIF info");
+        // Set up video playback
+        let video_path = Path::new("sample_video.mp4");
 
-        // Extract all frames
-        let mut frames = Vec::new();
-        while let Some(frame) = decoder.read_next_frame().expect("Failed to read frame") {
-            // Resize frame to target dimensions
-            let img = image::RgbaImage::from_raw(
-                frame.width as u32,
-                frame.height as u32,
-                frame.buffer.to_vec()
-            ).expect("Invalid frame data");
+        // Create channel for decoder thread to send frames to main thread
+        let (sender, receiver) = bounded(FRAME_BUFFER_SIZE);
 
-            let resized = image::imageops::resize(
-                &img,
-                WIDTH,
-                HEIGHT,
-                image::imageops::FilterType::Lanczos3
-            );
+        // Get video metadata for FPS
+        ffmpeg_next::init().ok();
+        let ictx = ffmpeg_next::format::input(&video_path)
+            .expect("Failed to open video file for metadata");
+        let video_stream = ictx
+            .streams()
+            .best(ffmpeg_next::media::Type::Video)
+            .expect("No video stream found");
 
-            frames.push(resized.into_raw());
-        }
+        // Calculate FPS from time base
+        let fps = video_stream.avg_frame_rate();
+        let fps = fps.numerator() as f32 / fps.denominator() as f32;
 
+        // Spawn decoder thread
+        Self::spawn_video_decoder(video_path, sender);
+
+        // Initialzie frame source with video config
         self.frame_source = Some(FrameSource::Video {
-            frames,
-            current: 0,
-            fps: 10.0,  // Adjust
+            frame_receiver: receiver,
+            frame_buffer: VecDeque::with_capacity(FRAME_BUFFER_SIZE),
+            current_frame: vec![0; (WIDTH * HEIGHT * 4) as usize], // Black initial frame
+            fps,  // Adjust
             last_frame_time: std::time::Instant::now(),
         });
 
@@ -143,7 +247,8 @@ impl ApplicationHandler for App {
     fn window_event(
         &mut self,
         event_loop: &dyn ActiveEventLoop,
-        window_id: WindowId, event: WindowEvent
+        window_id: WindowId,
+        event: WindowEvent
     ) {
         //  Called by "EventLoop::run_app" when new event happens on window
         match event {
