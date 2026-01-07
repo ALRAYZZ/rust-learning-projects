@@ -136,6 +136,11 @@ impl ApplicationHandler for App {
                     let _ = pixels.resize_surface(new_size.width, new_size.height);
                 }
             }
+            // Event that fires every frame when the window needs to be redrawn
+            // 1. Get data (What should I draw now?)
+            // 2. Check if tools are ready (Can I draw now?) (Pixels and Window)
+            // 3. Load: Put the image data into GPU memory -> Copy bytes to buffer
+            // 4. Render -> GPU renders the buffer to window
             WindowEvent::RedrawRequested =>  {
                 // Redraw the window contents
 
@@ -149,11 +154,13 @@ impl ApplicationHandler for App {
                 // Check if  we have rendering tools
                 if let (Some(pixels),
                     Some(window)) = (&mut self.pixels, &self.window) {
+                    // Copy frame data to pixel buffer (GPU buffer)
                     if let Some(frame_data) = frame_data {
-                        let frame = pixels.frame_mut();
-                        frame.copy_from_slice(frame_data);
+                        let frame = pixels.frame_mut(); // Mutable access to pixel buffer
+                        frame.copy_from_slice(frame_data); // Copy image data to pixel buffer
                     }
 
+                    // Render to screen
                     if pixels.render().is_err() {
                         event_loop.exit();
                         return;
