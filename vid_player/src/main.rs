@@ -5,16 +5,58 @@ use winit::dpi::LogicalSize;
 use winit::event::{StartCause, WindowEvent};
 use winit::event_loop::{ControlFlow, EventLoop, ActiveEventLoop};
 use winit::window::{Window, WindowAttributes, WindowId};
-use image::{DynamicImage, ImageBuffer, Rgba};
+use image::{DynamicImage, Frame, ImageBuffer, Rgba};
 use std::path::Path;
 
 const WIDTH: u32 = 320;
 const HEIGHT: u32 = 240;
 
+// Enum abstraction for different frame sources
+enum FrameSource {
+    StaticImage {
+        frame: Vec<u8>,
+    },
+    Video {
+        frames: Vec<Vec<u8>>,
+        current: usize,
+        fps: f32,
+        last_frame_time: std::time::Instant,
+    }
+}
+
 struct App {
     window: Option<Arc<Box<dyn Window>>>, // We use Arc because window is shared with Pixels and App
     pixels: Option<Pixels<'static>>,
-    frame_data: Option<Vec<u8>> // Store preloaded RGBA bytes
+    frame_source: Option<FrameSource> // Frame source (image or video)
+}
+
+impl App {
+    // This method determines the current frame to display based on the frame source
+    // We avoid passing the whole app struct to prevent multiple mutable borrows
+    // We just pass the frame source mutable reference
+    fn current_frame(frame_source: &mut Option<FrameSource>) -> Option<&[u8]> {
+        match frame_source.as_mut()? {
+            FrameSource::StaticImage {frame} => {
+                Some(frame)
+            }
+
+            FrameSource::Video {
+                frames,
+                current,
+                fps,
+                last_frame_time,
+            } => {
+                let frame_duration = std::time::Duration::from_secs_f32(1.0 / *fps);
+
+                if last_frame_time.elapsed() >= frame_duration {
+                    *current = (*current + 1) % frames.len();
+                    *last_frame_time = std::time::Instant::now();
+                }
+
+                Some(&frames[*current])
+            }
+        }
+    }
 }
 
 impl Default for App {
@@ -22,7 +64,7 @@ impl Default for App {
         Self {
             window: None,
             pixels: None,
-            frame_data: None
+            frame_source: None
         }
     }
 }
@@ -71,7 +113,7 @@ impl ApplicationHandler for App {
         let  rgba: ImageBuffer<Rgba<u8>, Vec<u8>> = resized_img.to_rgba8();
         let bytes: Vec<u8> = rgba.into_raw();
 
-        self.frame_data = Some(bytes);
+        self.frame_source= Some(FrameSource::StaticImage { frame: bytes });
 
 
         self.window = Some(window);
@@ -95,31 +137,36 @@ impl ApplicationHandler for App {
                 }
             }
             WindowEvent::RedrawRequested =>  {
-                // Redraw the app
+                // Redraw the window contents
+
+                // Get current frame data (only borrow self.frame_source mutably)
+                // Asking: What image data should I draw now?
+                // Static image will always return the same data
+                // Video will return next frame based on timing
+                let frame_data = Self::current_frame(&mut self.frame_source);
+
+                // Borrow pixels and window
+                // Check if  we have rendering tools
                 if let (Some(pixels),
-                    Some(window),
-                    Some(frame_data)) = (
-                    &mut self.pixels, &self.window, &self.frame_data
-                ) {
+                    Some(window)) = (&mut self.pixels, &self.window) {
+                    if let Some(frame_data) = frame_data {
+                        let frame = pixels.frame_mut();
+                        frame.copy_from_slice(frame_data);
+                    }
 
-                    let frame = pixels.frame_mut();
-
-                    // Copy preloaded frame data into pixel buffer every frame
-                    frame.copy_from_slice(frame_data);
-
-                    if let Err(err) = pixels.render() {
-                        eprintln!("pixels.render() failed: {:?}", err);
+                    if pixels.render().is_err() {
                         event_loop.exit();
                         return;
                     }
-
-                    window.request_redraw(); // Queue next frame
                 }
 
+
             }
+
             _ => {}
         }
     }
+
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
