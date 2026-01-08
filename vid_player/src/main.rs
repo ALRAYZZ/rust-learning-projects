@@ -10,8 +10,8 @@ use winit::event_loop::{ControlFlow, EventLoop, ActiveEventLoop};
 use winit::window::{Window, WindowAttributes, WindowId};
 use std::path::Path;
 
-const WIDTH: u32 = 320;
-const HEIGHT: u32 = 240;
+// const WIDTH: u32 = 320;
+// const HEIGHT: u32 = 240;
 const FRAME_BUFFER_SIZE: usize = 30; // Buffer 30 frames ahead to avoid stutter
 
 
@@ -32,7 +32,9 @@ enum FrameSource {
 struct App {
     window: Option<Arc<Box<dyn Window>>>, // We use Arc because window is shared with Pixels and App
     pixels: Option<Pixels<'static>>,
-    frame_source: Option<FrameSource> // Frame source (image or video)
+    frame_source: Option<FrameSource>, // Frame source (image or video)
+    video_width: u32,
+    video_height: u32,
 }
 
 impl App {
@@ -82,7 +84,8 @@ impl App {
     // 2. Decoding frames sequentially with packed feeding
     // 3. Converting YUV -> RGBA using FFmpeg scaler
     // 4. Sending fully-owned Vec<u8> through channel
-    fn spawn_video_decoder(video_path: &Path, sender: Sender<Vec<u8>>) {
+    fn spawn_video_decoder(video_path: &Path, sender: Sender<Vec<u8>>,
+                           target_width: u32, target_height: u32) {
         let video_path = video_path.to_path_buf();
 
         thread::spawn(move || {
@@ -116,8 +119,8 @@ impl App {
                 decoder.width(),
                 decoder.height(),
                 ffmpeg_next::format::Pixel::RGBA,
-                WIDTH,
-                HEIGHT,
+                target_width,
+                target_height,
                 ffmpeg_next::software::scaling::flag::Flags::BILINEAR
             ).expect("Failed to create scaler");
 
@@ -169,7 +172,9 @@ impl Default for App {
         Self {
             window: None,
             pixels: None,
-            frame_source: None
+            frame_source: None,
+            video_height: 0,
+            video_width: 0,
         }
     }
 }
@@ -187,35 +192,13 @@ impl ApplicationHandler for App {
 
     // This method is called by winit when the evnet loop has started
     fn can_create_surfaces(&mut self, event_loop: &dyn ActiveEventLoop) {
-        // Event loop has started, we can initialize our window now
-
-        // Create simple window with default attributes
-        let window_attributes = WindowAttributes::default()
-            .with_surface_size(LogicalSize::new(WIDTH, HEIGHT))
-            .with_title("Rust Video Player");
-
-        // We are not creating the window, but asking for winit to create it now that is safe
-        let window = event_loop.create_window(window_attributes).unwrap();
-        let window = Arc::new(window);
-        let window_size = window.surface_size();
-
-        // Create pixel buffer (Pixels) for rendering
-        let surface_texture = SurfaceTexture::new(
-            window_size.width,
-            window_size.height,
-            window.clone()
-        );
-
-        let pixels = Pixels::new(WIDTH, HEIGHT, surface_texture).unwrap();
-
         // Set up video playback
+        // Get video file path
         let video_path = Path::new("sample_video.mp4");
-
-        // Create channel for decoder thread to send frames to main thread
-        let (sender, receiver) = bounded(FRAME_BUFFER_SIZE);
-
-        // Get video metadata for FPS
+        // Initialize ffmpeg
         ffmpeg_next::init().ok();
+
+        // Get video metadata
         let ictx = ffmpeg_next::format::input(&video_path)
             .expect("Failed to open video file for metadata");
         let video_stream = ictx
@@ -223,18 +206,51 @@ impl ApplicationHandler for App {
             .best(ffmpeg_next::media::Type::Video)
             .expect("No video stream found");
 
+        // Create ffmpeg context from stream parameters
+        let context = ffmpeg_next::codec::context::Context::from_parameters(
+            video_stream.parameters()
+        ).expect("Failed to create codec context from parameters");
+
+        // Creating 2nd decoder just for metadata extraction
+        // REFACTOR LATER: Decoder thread; opens decoder reads info and sends a message of videoinfo
+        // Main thread creates window and pixels after receiving dimensions
+        // Using context to create decoder
+        let decoder = context.decoder().video()
+            .expect("Failed to create video decoder for metadata");
+
+        // Store video dimensions
+        self.video_width = decoder.width();
+        self.video_height = decoder.height();
+
         // Calculate FPS from time base
-        let fps = video_stream.avg_frame_rate();
-        let fps = fps.numerator() as f32 / fps.denominator() as f32;
+        let fps_ratio = video_stream.avg_frame_rate();
+        let fps = fps_ratio.numerator() as f32 / fps_ratio.denominator() as f32;
+
+        let window_attributes = WindowAttributes::default()
+            .with_surface_size(LogicalSize::new(self.video_width, self.video_height))
+            .with_title("Rust Video Player");
+        let window = Arc::new(event_loop.create_window(window_attributes).unwrap());
+        let window_size = window.surface_size();
+
+        let surface_texture = SurfaceTexture::new(
+            window_size.width,
+            window_size.height,
+            window.clone(),
+        );
+        let pixels = Pixels::new(self.video_width, self.video_height, surface_texture)
+            .expect("Failed to create Pixels");
+
+        // Create channel for decoder thread to send frames to main thread
+        let (sender, receiver) = bounded(FRAME_BUFFER_SIZE);
 
         // Spawn decoder thread
-        Self::spawn_video_decoder(video_path, sender);
+        Self::spawn_video_decoder(video_path, sender, self.video_width, self.video_height);
 
         // Initialzie frame source with video config
         self.frame_source = Some(FrameSource::Video {
             frame_receiver: receiver,
             frame_buffer: VecDeque::with_capacity(FRAME_BUFFER_SIZE),
-            current_frame: vec![0; (WIDTH * HEIGHT * 4) as usize], // Black initial frame
+            current_frame: vec![0; (self.video_width * self.video_height * 4) as usize], // Black initial frame
             fps,  // Adjust
             last_frame_time: std::time::Instant::now(),
         });
