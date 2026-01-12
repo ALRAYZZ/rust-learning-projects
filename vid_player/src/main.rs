@@ -78,95 +78,69 @@ impl App {
         }
     }
 
-    // Spawns a background thread that decodes video frames and sends them to main thread
+    // Spawns background thread that demuxes and decodes video and audio packets.
     // This architecture solves lifetime issues by:
     // 1. Creating all FFmpeg objects in worker thread
     // 2. Decoding frames sequentially with packed feeding
     // 3. Converting YUV -> RGBA using FFmpeg scaler
     // 4. Sending fully-owned Vec<u8> through channel
-    fn spawn_video_decoder(video_path: &Path, sender: Sender<Vec<u8>>,
-                           target_width: u32, target_height: u32) {
+    fn spawn_demux_decode_thread(video_path: &Path,
+                           v_sender: Sender<Vec<u8>>,
+                           a_sender: Sender<Vec<f32>>,
+                           target_width: u32,
+                           target_height: u32) {
+        let video_path = video_path.to_owned();
 
-        let video_path = video_path.to_path_buf();
-
-        // Spawning new thread to handle video decoding and avoiding window freezes
         thread::spawn(move || {
-            // Initialize FFmpeg
-            ffmpeg_next::init().expect("Failed to initialize FFmpeg");
-
-            // Open video file and find video stream (input context)
+           ffmpeg_next::init().ok();
             let mut ictx = ffmpeg_next::format::input(&video_path)
                 .expect("Failed to open video file");
 
-            let video_stream = ictx
-                .streams()
-                .best(ffmpeg_next::media::Type::Video)
-                .expect("No video stream found");
-
-            let video_stream_index = video_stream.index();
-
-            // Create decoder for the video stream
-            let context_decoder = ffmpeg_next::codec::context::Context::from_parameters(
-                video_stream.parameters()
-            ).expect("Failed to create codec context");
-
-            let mut decoder = context_decoder
-                .decoder()
-                .video()
-                .expect("Failed to create video decoder");
-
-            // Create scaler to convert YUV -> RGBA and resize to target dimensions
-            // YUV is a format to allow efficient compression and storage of color data
-            // We need RGBA for actual rendering on screen
+            // VIDEO SETUP
+            let v_stream = ictx.streams().best(ffmpeg_next::media::Type::Video)
+                .expect("Failed to get video stream");
+            let v_index = v_stream.index();
+            let v_context = ffmpeg_next::codec::context::Context::from_parameters(v_stream.parameters())
+                .expect("Failed to create video codec context");
+            let mut v_decoder = v_context.decoder().video().unwrap();
             let mut scaler = ffmpeg_next::software::scaling::Context::get(
-                decoder.format(),
-                decoder.width(),
-                decoder.height(),
+                v_decoder.format(),
+                v_decoder.width(),
+                v_decoder.height(),
                 ffmpeg_next::format::Pixel::RGBA,
                 target_width,
                 target_height,
-                ffmpeg_next::software::scaling::flag::Flags::BILINEAR
-            ).expect("Failed to create scaler");
+                ffmpeg_next::software::scaling::flag::Flags::BILINEAR,
+            ).unwrap();
 
-            // Decode loop: read packets -> send decoder -> receive frames -> convert -> send
+            // AUDIO SETUP
+            let a_stream = ictx.streams().best(ffmpeg_next::media::Type::Audio)
+                .expect("Failed to get audio stream");
+            let a_index = a_stream.index();
+            let a_context = ffmpeg_next::codec::context::Context::from_parameters(a_stream.parameters())
+                .expect("Failed to create audio codec context");
+            let mut a_decoder = a_context.decoder().audio().unwrap();
+
+            // Unified LOOP to read packets and decode
             for (stream, packet) in ictx.packets() {
-                // Only process packets from video stream
-                if stream.index() == video_stream_index {
-                    // Send packet to decoder
-                    decoder.send_packet(&packet).expect("Failed to send packet");
-
-                    // Receive all available decoded frames
-                    let mut decoded_frame = ffmpeg_next::util::frame::video::Video::empty();
-                    // Loop while there are frames to receive
-                    while decoder.receive_frame(&mut decoded_frame).is_ok() {
-                        // Create empty frame for scaled output
-                        let mut rgb_frame = ffmpeg_next::util::frame::video::Video::empty();
-
-                        // Scale and convert to RGBA
-                        scaler.run(&decoded_frame, &mut rgb_frame)
-                            .expect("Failed to scale frame");
-
-                        // Copy RGBA data to owned Vec
-                        let data = rgb_frame.data(0);
-                        let frame_data = data.to_vec();
-
-                        // Send to main thread (blocks if buffer full)
-                        if sender.send(frame_data).is_err() {
-                            // Main thread deopped receiver, stop decoding
-                            return;
-                        }
+                if stream.index() == v_index {
+                    // Handle video packet
+                    v_decoder.send_packet(&packet).ok();
+                    let mut frame = ffmpeg_next::util::frame::Video::empty();
+                    while v_decoder.receive_frame(&mut frame).is_ok() {
+                        let mut rgb_frame = ffmpeg_next::util::frame::Video::empty();
+                        scaler.run(&frame, &mut rgb_frame).ok();
+                        // Send RGBA data to main thread
+                        if v_sender.send(rgb_frame.data(0).to_vec()).is_err() { return; }
+                    }
+                } else if stream.index() == a_index {
+                    // Handle audio packet
+                    a_decoder.send_packet(&packet).ok();
+                    let mut frame = ffmpeg_next::util::frame::Audio::empty();
+                    while a_decoder.receive_frame(&mut frame).is_ok() {
+                        // TODO RESAMPLER
                     }
                 }
-            }
-
-            // Flush decoder to get remaing frames
-            decoder.send_eof().ok();
-            let mut decoded_frame = ffmpeg_next::util::frame::video::Video::empty();
-            while decoder.receive_frame(&mut decoded_frame).is_ok() {
-                let mut rgb_frame = ffmpeg_next::util::frame::video::Video::empty();
-                scaler.run(&decoded_frame, &mut rgb_frame).ok();
-                let data = rgb_frame.data(0);
-                sender.send(data.to_vec()).ok();
             }
         });
     }
@@ -206,34 +180,16 @@ impl ApplicationHandler for App {
         // Get video metadata
         let ictx = ffmpeg_next::format::input(&video_path)
             .expect("Failed to open video file for metadata");
+
         let video_stream = ictx
             .streams()
             .best(ffmpeg_next::media::Type::Video)
             .expect("No video stream found");
 
-        let audio_stream = ictx
-            .streams()
-            .best(ffmpeg_next::media::Type::Audio)
-            .expect("No audio stream found");
-
-        // Create ffmpeg context from stream parameters
-        let video_context = ffmpeg_next::codec::context::Context::from_parameters(
-            video_stream.parameters()
-        ).expect("Failed to create codec context from parameters");
-
-        let audio_context = ffmpeg_next::codec::context::Context::from_parameters(
-            audio_stream.parameters()
-        ).expect("Failed to create audio codec context from parameters");
-
-        let mut audio_decoder = audio_context.decoder()
-            .audio()
-            .expect("Failed to create audio decoder");
-
-        // Creating 2nd decoder just for metadata extraction
-        // REFACTOR LATER: Decoder thread; opens decoder reads info and sends a message of videoinfo
-        // Main thread creates window and pixels after receiving dimensions
-        // Using context to create decoder
-        let video_decoder = video_context.decoder().video()
+        // Extract info for the Window and App state
+        let video_params = video_stream.parameters();
+        let decoder_ctx = ffmpeg_next::codec::context::Context::from_parameters(video_params).unwrap();
+        let video_decoder = decoder_ctx.decoder().video()
             .expect("Failed to create video decoder for metadata");
 
         // Store video dimensions
@@ -244,6 +200,7 @@ impl ApplicationHandler for App {
         let fps_ratio = video_stream.avg_frame_rate();
         let fps = fps_ratio.numerator() as f32 / fps_ratio.denominator() as f32;
 
+        // Setup Window and Pixels
         let window_attributes = WindowAttributes::default()
             .with_surface_size(LogicalSize::new(self.video_width, self.video_height))
             .with_title("Rust Video Player");
@@ -258,15 +215,16 @@ impl ApplicationHandler for App {
         let pixels = Pixels::new(self.video_width, self.video_height, surface_texture)
             .expect("Failed to create Pixels");
 
-        // Create channel for decoder thread to send frames to main thread
-        let (sender, receiver) = bounded(FRAME_BUFFER_SIZE);
+        // Setup channels (One for video, one for audio)
+        let (v_sender, v_receiver) = bounded(FRAME_BUFFER_SIZE);
+        let (a_sender, a_receiver) = bounded(200);
 
-        // Spawn decoder thread
-        Self::spawn_video_decoder(video_path, sender, self.video_width, self.video_height);
+        // Start worker thread to decode video frames
+        Self::spawn_demux_decode_thread(video_path, v_sender, a_sender, self.video_width, self.video_height);
 
         // Initialzie frame source with video config
         self.frame_source = Some(FrameSource::Video {
-            frame_receiver: receiver,
+            frame_receiver: v_receiver,
             frame_buffer: VecDeque::with_capacity(FRAME_BUFFER_SIZE),
             current_frame: vec![0; (self.video_width * self.video_height * 4) as usize], // Black initial frame
             fps,  // Adjust
