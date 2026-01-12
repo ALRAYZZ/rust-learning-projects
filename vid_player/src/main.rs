@@ -9,6 +9,7 @@ use winit::event::{StartCause, WindowEvent};
 use winit::event_loop::{ControlFlow, EventLoop, ActiveEventLoop};
 use winit::window::{Window, WindowAttributes, WindowId};
 use std::path::Path;
+use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 
 // const WIDTH: u32 = 320;
 // const HEIGHT: u32 = 240;
@@ -34,6 +35,7 @@ struct App {
     pixels: Option<Pixels<'static>>,
     frame_source: Option<FrameSource>, // Frame source (image or video)
     audio_receiver: Option<Receiver<Vec<f32>>>, // Audio samples receiver
+    audio_stream: Option<cpal::Stream>,
     video_width: u32,
     video_height: u32,
 }
@@ -177,7 +179,7 @@ impl App {
             while v_decoder.receive_frame(&mut v_frame).is_ok() {
                 let mut rgb_frame = ffmpeg_next::util::frame::Video::empty();
                 scaler.run(&v_frame, &mut rgb_frame).ok();
-                let _ = v_sender.send(rgb_frame.data(0).to_vec()).
+                let _ = v_sender.send(rgb_frame.data(0).to_vec());
             }
 
             // Audio flush
@@ -196,6 +198,144 @@ impl App {
             }
         });
     }
+
+    fn setup_audio(receiver: Receiver<Vec<f32>>) -> cpal::Stream {
+        use cpal::traits::DeviceTrait;
+
+        let host = cpal::default_host();
+        let device = host
+            .default_output_device()
+            .expect("No output device found");
+
+        // Pick a config the device actually supports (prefer 2ch, 44100Hz, f32).
+        let supported_configs = device
+            .supported_output_configs()
+            .expect("Failed to query supported output configs");
+
+        // Prefer stereo otherwise accept any config
+        let mut best: Option<cpal::SupportedStreamConfig> = None;
+        let mut best_is_stereo = false;
+
+        for cfg in supported_configs {
+            let is_stereo = cfg.channels() == 2;
+
+            // Only replace current best if:
+            // we dont have one yet, or
+            // current is not stereo and this one is
+            if best.is_none() || (is_stereo && !best_is_stereo) {
+                // Choose 44100 if allowed, otherwise clamp
+                let target_sr = 44_100u32;
+                let min_sr = cfg.min_sample_rate();
+                let max_sr = cfg.max_sample_rate();
+                let chosen_sr = target_sr.clamp(min_sr, max_sr);
+
+                let chosen = cfg.with_sample_rate(chosen_sr.into());
+
+                best = Some(chosen);
+                best_is_stereo = is_stereo;
+
+                // Exit early if we found stereo
+                if best_is_stereo { break; }
+            }
+        }
+
+        let supported = best.expect("No supported stereo output config found");
+        let config: cpal::StreamConfig = supported.clone().into();
+        let sample_format = supported.sample_format();
+
+        // Keep track of samples across callbacks
+        let mut sample_queue: VecDeque<f32> = VecDeque::new();
+        let err_fn = |err| eprintln!("Audio stream error: {}", err);
+
+        match sample_format {
+            cpal::SampleFormat::F32 => {
+                let stream = device
+                    .build_output_stream(
+                        &config,
+                        move |data: &mut [f32], _: &cpal::OutputCallbackInfo| {
+                            while let Ok(samples) = receiver.try_recv() {
+                                sample_queue.extend(samples);
+                            }
+                            for s in data.iter_mut() {
+                                *s = sample_queue.pop_front().unwrap_or(0.0);
+                            }
+                        },
+                        err_fn,
+                        None,
+                    )
+                    .expect("Failed to build audio stream");
+                stream.play().expect("Failed to play audio stream");
+                stream
+            }
+            cpal::SampleFormat::I16 => {
+                let stream = device
+                    .build_output_stream(
+                        &config,
+                        move |data: &mut [i16], _: &cpal::OutputCallbackInfo| {
+                            while let Ok(samples) = receiver.try_recv() {
+                                sample_queue.extend(samples);
+                            }
+                            for s in data.iter_mut() {
+                                let f = sample_queue
+                                    .pop_front().unwrap_or(0.0).clamp(-1.0, 1.0);
+                                *s = (f * i16::MAX as f32) as i16;
+                            }
+                        },
+                        err_fn,
+                        None,
+                    )
+                    .expect("Failed to build audio stream");
+                stream.play().expect("Failed to play audio stream");
+                stream
+            }
+            cpal::SampleFormat::U16 => {
+                let stream = device
+                    .build_output_stream(
+                        &config,
+                        move |data: &mut [u16], _: &cpal::OutputCallbackInfo| {
+                            while let Ok(samples) = receiver.try_recv() {
+                                sample_queue.extend(samples);
+                            }
+                            for s in data.iter_mut() {
+                                let f = sample_queue.pop_front().unwrap_or(0.0).clamp(-1.0, 1.0);
+                                // Map [-1, 1] -> [0, u16::MAX]
+                                *s = (((f + 1.0) * 0.5) * u16::MAX as f32) as u16;
+                            }
+                        },
+                        err_fn,
+                        None,
+                    )
+                    .expect("Failed to build audio stream");
+                stream.play().expect("Failed to play audio stream");
+                stream
+            }
+            cpal::SampleFormat::I32 => {
+                let stream = device
+                    .build_output_stream(
+                        &config,
+                        move |data: &mut [i32], _: &cpal::OutputCallbackInfo| {
+                            while let Ok(samples) = receiver.try_recv() {
+                                sample_queue.extend(samples);
+                            }
+                            for s in data.iter_mut() {
+                                let f = sample_queue.pop_front().unwrap_or(0.0).clamp(-1.0, 1.0);
+                                *s = (f * i32::MAX as f32) as i32;
+                            }
+                        },
+                        err_fn,
+                        None,
+                    )
+                    .expect("Failed to build audio stream");
+                stream.play().expect("Failed to play audio stream");
+                stream
+            }
+
+            _ => {
+                panic!("Unsupported sample format: {:?}", sample_format);
+            }
+        }
+    }
+
 }
 
 impl Default for App {
@@ -205,6 +345,7 @@ impl Default for App {
             pixels: None,
             frame_source: None,
             audio_receiver: None,
+            audio_stream: None,
             video_height: 0,
             video_width: 0,
         }
@@ -272,6 +413,10 @@ impl ApplicationHandler for App {
         let (v_sender, v_receiver) = bounded(FRAME_BUFFER_SIZE);
         let (a_sender, a_receiver) = bounded(200);
 
+        // Initialize CPAL audio stream
+        let stream = Self::setup_audio(a_receiver);
+        self.audio_stream = Some(stream);
+
         // Start worker thread to decode video frames
         Self::spawn_demux_decode_thread(video_path, v_sender, a_sender, self.video_width, self.video_height);
 
@@ -288,7 +433,6 @@ impl ApplicationHandler for App {
         self.window = Some(window);
         self.pixels = Some(pixels);
 
-        self.audio_receiver = Some(a_receiver);
     }
 
     fn window_event(
