@@ -86,13 +86,15 @@ impl App {
     // 4. Sending fully-owned Vec<u8> through channel
     fn spawn_video_decoder(video_path: &Path, sender: Sender<Vec<u8>>,
                            target_width: u32, target_height: u32) {
+
         let video_path = video_path.to_path_buf();
 
+        // Spawning new thread to handle video decoding and avoiding window freezes
         thread::spawn(move || {
             // Initialize FFmpeg
             ffmpeg_next::init().expect("Failed to initialize FFmpeg");
 
-            // Open video file and find video stream
+            // Open video file and find video stream (input context)
             let mut ictx = ffmpeg_next::format::input(&video_path)
                 .expect("Failed to open video file");
 
@@ -113,7 +115,9 @@ impl App {
                 .video()
                 .expect("Failed to create video decoder");
 
-            // Create scaler to convert YUV -> RGBA and resizse to target dimensions
+            // Create scaler to convert YUV -> RGBA and resize to target dimensions
+            // YUV is a format to allow efficient compression and storage of color data
+            // We need RGBA for actual rendering on screen
             let mut scaler = ffmpeg_next::software::scaling::Context::get(
                 decoder.format(),
                 decoder.width(),
@@ -133,6 +137,7 @@ impl App {
 
                     // Receive all available decoded frames
                     let mut decoded_frame = ffmpeg_next::util::frame::video::Video::empty();
+                    // Loop while there are frames to receive
                     while decoder.receive_frame(&mut decoded_frame).is_ok() {
                         // Create empty frame for scaled output
                         let mut rgb_frame = ffmpeg_next::util::frame::video::Video::empty();
@@ -206,21 +211,34 @@ impl ApplicationHandler for App {
             .best(ffmpeg_next::media::Type::Video)
             .expect("No video stream found");
 
+        let audio_stream = ictx
+            .streams()
+            .best(ffmpeg_next::media::Type::Audio)
+            .expect("No audio stream found");
+
         // Create ffmpeg context from stream parameters
-        let context = ffmpeg_next::codec::context::Context::from_parameters(
+        let video_context = ffmpeg_next::codec::context::Context::from_parameters(
             video_stream.parameters()
         ).expect("Failed to create codec context from parameters");
+
+        let audio_context = ffmpeg_next::codec::context::Context::from_parameters(
+            audio_stream.parameters()
+        ).expect("Failed to create audio codec context from parameters");
+
+        let mut audio_decoder = audio_context.decoder()
+            .audio()
+            .expect("Failed to create audio decoder");
 
         // Creating 2nd decoder just for metadata extraction
         // REFACTOR LATER: Decoder thread; opens decoder reads info and sends a message of videoinfo
         // Main thread creates window and pixels after receiving dimensions
         // Using context to create decoder
-        let decoder = context.decoder().video()
+        let video_decoder = video_context.decoder().video()
             .expect("Failed to create video decoder for metadata");
 
         // Store video dimensions
-        self.video_width = decoder.width();
-        self.video_height = decoder.height();
+        self.video_width = video_decoder.width();
+        self.video_height = video_decoder.height();
 
         // Calculate FPS from time base
         let fps_ratio = video_stream.avg_frame_rate();
