@@ -122,6 +122,15 @@ impl App {
                 .expect("Failed to create audio codec context");
             let mut a_decoder = a_context.decoder().audio().unwrap();
 
+            let mut resampler = ffmpeg_next::software::resampling::Context::get(
+                a_decoder.format(),
+                a_decoder.channel_layout(),
+                a_decoder.rate(),
+                ffmpeg_next::format::Sample::F32(ffmpeg_next::format::sample::Type::Packed),
+                ffmpeg_next::channel_layout::ChannelLayout::STEREO,
+                44100,
+            ).expect("Failed to create audio resampler");
+
             // Unified LOOP to read packets and decode
             for (stream, packet) in ictx.packets() {
                 if stream.index() == v_index {
@@ -139,7 +148,22 @@ impl App {
                     a_decoder.send_packet(&packet).ok();
                     let mut frame = ffmpeg_next::util::frame::Audio::empty();
                     while a_decoder.receive_frame(&mut frame).is_ok() {
-                        // TODO RESAMPLER
+                        let mut resampled_frame = ffmpeg_next::util::frame::audio::Audio::empty();
+
+                        // Run resampler
+                        resampler.run(&frame, &mut resampled_frame).ok();
+
+                        // In 'Packed' format, all samples are in data(0)
+                        let data = resampled_frame.data(0);
+
+                        // Convert the raw byte slice intoo Vec<f32>
+                        let f32_samples: Vec<f32> = data
+                            .chunks_exact(4)
+                            .map(|chunk| f32::from_le_bytes(chunk.try_into().unwrap()))
+                            .collect();
+
+                        // Send samples to main thread
+                        if a_sender.send(f32_samples).is_err() { return; }
                     }
                 }
             }
@@ -153,6 +177,7 @@ impl Default for App {
             window: None,
             pixels: None,
             frame_source: None,
+            audio_receiver: None,
             video_height: 0,
             video_width: 0,
         }
@@ -235,6 +260,8 @@ impl ApplicationHandler for App {
 
         self.window = Some(window);
         self.pixels = Some(pixels);
+
+        self.audio_receiver = Some(a_receiver);
     }
 
     fn window_event(
