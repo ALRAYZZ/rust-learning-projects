@@ -167,6 +167,33 @@ impl App {
                     }
                 }
             }
+
+            // Potential refactor into "process video frame" and "process audio frame" functions
+            // Flush decoders
+
+            // Video flush
+            v_decoder.send_eof().ok();
+            let mut v_frame = ffmpeg_next::util::frame::Video::empty();
+            while v_decoder.receive_frame(&mut v_frame).is_ok() {
+                let mut rgb_frame = ffmpeg_next::util::frame::Video::empty();
+                scaler.run(&v_frame, &mut rgb_frame).ok();
+                let _ = v_sender.send(rgb_frame.data(0).to_vec()).
+            }
+
+            // Audio flush
+            a_decoder.send_eof().ok();
+            let mut a_frame = ffmpeg_next::util::frame::Audio::empty();
+            while a_decoder.receive_frame(&mut a_frame).is_ok() {
+                let mut resampled_frame = ffmpeg_next::util::frame::audio::Audio::empty();
+                resampler.run(&a_frame, &mut resampled_frame).ok();
+
+                let data = resampled_frame.data(0);
+                let f32_samples: Vec<f32> = data
+                    .chunks_exact(4)
+                    .map(|chunk| f32::from_le_bytes(chunk.try_into().unwrap()))
+                    .collect();
+                let _ = a_sender.send(f32_samples);
+            }
         });
     }
 }
