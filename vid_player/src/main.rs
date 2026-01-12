@@ -33,6 +33,7 @@ struct App {
     window: Option<Arc<Box<dyn Window>>>, // We use Arc because window is shared with Pixels and App
     pixels: Option<Pixels<'static>>,
     frame_source: Option<FrameSource>, // Frame source (image or video)
+    audio_receiver: Option<Receiver<Vec<f32>>>, // Audio samples receiver
     video_width: u32,
     video_height: u32,
 }
