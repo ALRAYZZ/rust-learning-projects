@@ -15,6 +15,11 @@ use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 // const HEIGHT: u32 = 240;
 const FRAME_BUFFER_SIZE: usize = 30; // Buffer 30 frames ahead to avoid stutter
 
+// Struct to hold video frame data and timestamp
+struct VideoFrame {
+    pts: f64, // Timestamp in seconds
+    data: Vec<u8>, // RGBA pixel data
+}
 
 // Enum abstraction for different frame sources
 enum FrameSource {
@@ -22,13 +27,14 @@ enum FrameSource {
         frame: Vec<u8>,
     },
     Video {
-        frame_receiver: Receiver<Vec<u8>>, // Receives decoded frames from worker thread
-        frame_buffer: VecDeque<Vec<u8>>, // Ring buffer to hold decoded frames
+        frame_receiver: Receiver<VideoFrame>, // Receives decoded frames from worker thread
+        frame_buffer: VecDeque<VideoFrame>, // Ring buffer to hold decoded frames
         current_frame: Vec<u8>, // Current frame being displayed
         fps: f32,
         last_frame_time: std::time::Instant,
     }
 }
+
 
 struct App {
     window: Option<Arc<Box<dyn Window>>>, // We use Arc because window is shared with Pixels and App
@@ -71,7 +77,7 @@ impl App {
                 if last_frame_time.elapsed() > frame_duration {
                     // Try to get next frame from buffer
                     if let Some(next_frame) = frame_buffer.pop_front() {
-                        *current_frame = next_frame;
+                        *current_frame = next_frame.data;
                         *last_frame_time = std::time::Instant::now();
                     }
                 }
@@ -88,7 +94,7 @@ impl App {
     // 3. Converting YUV -> RGBA using FFmpeg scaler
     // 4. Sending fully-owned Vec<u8> through channel
     fn spawn_demux_decode_thread(video_path: &Path,
-                           v_sender: Sender<Vec<u8>>,
+                           v_sender: Sender<VideoFrame>,
                            a_sender: Sender<Vec<f32>>,
                            target_width: u32,
                            target_height: u32) {
@@ -100,38 +106,57 @@ impl App {
                 .expect("Failed to open video file");
 
             // VIDEO SETUP
-            let v_stream = ictx.streams().best(ffmpeg_next::media::Type::Video)
-                .expect("Failed to get video stream");
-            let v_index = v_stream.index();
-            let v_context = ffmpeg_next::codec::context::Context::from_parameters(v_stream.parameters())
-                .expect("Failed to create video codec context");
-            let mut v_decoder = v_context.decoder().video().unwrap();
-            let mut scaler = ffmpeg_next::software::scaling::Context::get(
-                v_decoder.format(),
-                v_decoder.width(),
-                v_decoder.height(),
-                ffmpeg_next::format::Pixel::RGBA,
-                target_width,
-                target_height,
-                ffmpeg_next::software::scaling::flag::Flags::BILINEAR,
-            ).unwrap();
+            let (v_index, v_time_base, mut v_decoder, mut scaler) = {
+                let v_stream = ictx.streams().best(ffmpeg_next::media::Type::Video)
+                    .expect("Failed to get video stream");
+
+                let v_index = v_stream.index();
+                let v_time_base = v_stream.time_base();
+
+                let v_context = ffmpeg_next::codec::context::Context::from_parameters(
+                    v_stream.parameters())
+                    .expect("Failed to create video codec context");
+                let mut v_decoder = v_context.decoder().video().unwrap();
+
+                let scaler = ffmpeg_next::software::scaling::Context::get(
+                    v_decoder.format(),
+                    v_decoder.width(),
+                    v_decoder.height(),
+                    ffmpeg_next::format::Pixel::RGBA,
+                    target_width,
+                    target_height,
+                    ffmpeg_next::software::scaling::flag::Flags::BILINEAR,
+                ).unwrap();
+
+                (v_index, v_time_base, v_decoder, scaler)
+            };
 
             // AUDIO SETUP
-            let a_stream = ictx.streams().best(ffmpeg_next::media::Type::Audio)
-                .expect("Failed to get audio stream");
-            let a_index = a_stream.index();
-            let a_context = ffmpeg_next::codec::context::Context::from_parameters(a_stream.parameters())
-                .expect("Failed to create audio codec context");
-            let mut a_decoder = a_context.decoder().audio().unwrap();
+            let (a_index, mut a_decoder, mut resampler) = {
+                let a_stream = ictx.streams().best(ffmpeg_next::media::Type::Audio)
+                    .expect("Failed to get audio stream");
 
-            let mut resampler = ffmpeg_next::software::resampling::Context::get(
-                a_decoder.format(),
-                a_decoder.channel_layout(),
-                a_decoder.rate(),
-                ffmpeg_next::format::Sample::F32(ffmpeg_next::format::sample::Type::Packed),
-                ffmpeg_next::channel_layout::ChannelLayout::STEREO,
-                44100,
-            ).expect("Failed to create audio resampler");
+                let a_index = a_stream.index();
+
+                let a_context = ffmpeg_next::codec::context::Context::from_parameters(a_stream.parameters())
+                    .expect("Failed to create audio codec context");
+
+                let mut a_decoder = a_context.decoder().audio().unwrap();
+
+                let mut resampler = ffmpeg_next::software::resampling::Context::get(
+                    a_decoder.format(),
+                    a_decoder.channel_layout(),
+                    a_decoder.rate(),
+                    ffmpeg_next::format::Sample::F32(ffmpeg_next::format::sample::Type::Packed),
+                    ffmpeg_next::channel_layout::ChannelLayout::STEREO,
+                    44100,
+                ).expect("Failed to create audio resampler");
+
+                (a_index, a_decoder, resampler)
+            };
+
+
+
 
             // Unified LOOP to read packets and decode
             for (stream, packet) in ictx.packets() {
@@ -139,11 +164,28 @@ impl App {
                     // Handle video packet
                     v_decoder.send_packet(&packet).ok();
                     let mut frame = ffmpeg_next::util::frame::Video::empty();
+
                     while v_decoder.receive_frame(&mut frame).is_ok() {
                         let mut rgb_frame = ffmpeg_next::util::frame::Video::empty();
                         scaler.run(&frame, &mut rgb_frame).ok();
-                        // Send RGBA data to main thread
-                        if v_sender.send(rgb_frame.data(0).to_vec()).is_err() { return; }
+
+                        // Convert FFmpeg PTS → seconds
+                        let pts = frame
+                            .pts()
+                            .unwrap_or(0) as f64
+                            * f64::from(v_time_base);
+
+                        let video_frame = VideoFrame {
+                            pts,
+                            data: rgb_frame.data(0).to_vec(),
+                        };
+
+                        if v_sender.send(VideoFrame {
+                            pts,
+                            data: rgb_frame.data(0).to_vec(),
+                        }).is_err() {
+                            return;
+                        }
                     }
                 } else if stream.index() == a_index {
                     // Handle audio packet
@@ -179,7 +221,16 @@ impl App {
             while v_decoder.receive_frame(&mut v_frame).is_ok() {
                 let mut rgb_frame = ffmpeg_next::util::frame::Video::empty();
                 scaler.run(&v_frame, &mut rgb_frame).ok();
-                let _ = v_sender.send(rgb_frame.data(0).to_vec());
+
+                let pts = v_frame
+                    .pts()
+                    .unwrap_or(0) as f64
+                    * f64::from(v_time_base);
+
+                let _ = v_sender.send(VideoFrame {
+                    pts,
+                    data: rgb_frame.data(0).to_vec(),
+                });
             }
 
             // Audio flush
@@ -417,7 +468,7 @@ impl ApplicationHandler for App {
             .expect("Failed to create Pixels");
 
         // Setup channels (One for video, one for audio)
-        let (v_sender, v_receiver) = bounded(FRAME_BUFFER_SIZE);
+        let (v_sender, v_receiver) = bounded::<VideoFrame>(FRAME_BUFFER_SIZE);
         let (a_sender, a_receiver) = bounded(200);
 
         // Initialize CPAL audio stream
