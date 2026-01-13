@@ -9,7 +9,9 @@ use winit::event::{StartCause, WindowEvent};
 use winit::event_loop::{ControlFlow, EventLoop, ActiveEventLoop};
 use winit::window::{Window, WindowAttributes, WindowId};
 use std::path::Path;
+use std::sync::atomic::{AtomicU64, Ordering};
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
+use ffmpeg_next::codec::Audio;
 
 // const WIDTH: u32 = 320;
 // const HEIGHT: u32 = 240;
@@ -18,7 +20,30 @@ const FRAME_BUFFER_SIZE: usize = 30; // Buffer 30 frames ahead to avoid stutter
 // Struct to hold video frame data and timestamp
 struct VideoFrame {
     pts: f64, // Timestamp in seconds
-    data: Vec<u8>, // RGBA pixel data
+    video_data: Vec<u8>, // RGBA pixel data
+}
+
+struct AudioFrame {
+    pts: f64,
+    samples: Vec<f32>, // Interleaved stereo samples
+}
+
+struct AudioClock {
+    samples_played: AtomicU64,
+    sample_rate: u32,
+}
+
+impl  AudioClock {
+    fn new(sample_rate: u32) -> Self {
+        Self {
+            samples_played: AtomicU64::new(0),
+            sample_rate,
+        }
+    }
+
+    fn time(&self) -> f64 {
+        self.samples_played.load(Ordering::Relaxed) as f64 / self.sample_rate as f64
+    }
 }
 
 // Enum abstraction for different frame sources
@@ -32,6 +57,7 @@ enum FrameSource {
         current_frame: Vec<u8>, // Current frame being displayed
         fps: f32,
         last_frame_time: std::time::Instant,
+        start_instant: std::time::Instant,
     }
 }
 
@@ -42,6 +68,7 @@ struct App {
     frame_source: Option<FrameSource>, // Frame source (image or video)
     audio_receiver: Option<Receiver<Vec<f32>>>, // Audio samples receiver
     audio_stream: Option<cpal::Stream>,
+    audio_clock: Option<Arc<AudioClock>>,
     video_width: u32,
     video_height: u32,
 }
@@ -50,18 +77,19 @@ impl App {
     // Determines current frame to display based on frame source
     // Static: Returns the same frame
     // Video: Advances frame when enough time has passed based on fps
-    fn current_frame(frame_source: &mut Option<FrameSource>) -> Option<&[u8]> {
+    fn current_frame<'a>(frame_source: &'a mut Option<FrameSource>, audio_clock: Option<&Arc<AudioClock>>) -> Option<&'a [u8]> {
         match frame_source.as_mut()? {
             FrameSource::StaticImage {frame} => {
-                Some(frame)
+                Some(frame.as_slice())
             }
 
             FrameSource::Video {
                 frame_receiver,
                 frame_buffer,
                 current_frame,
-                fps,
-                last_frame_time,
+                fps: _,
+                last_frame_time: _,
+                start_instant,
             } => {
                 // Refill buffer from decoder thread if space available
                 while frame_buffer.len() < FRAME_BUFFER_SIZE {
@@ -71,18 +99,24 @@ impl App {
                     }
                 }
 
-                // Check if enough time has passed to advance next frame
-                let frame_duration = std::time::Duration::from_secs_f32(1.0 / *fps);
+                // Prefer audio clock if available
+                let now_time = if let Some(clock) = audio_clock {
+                    clock.time()
+                } else {
+                    start_instant.elapsed().as_secs_f64()
+                };
 
-                if last_frame_time.elapsed() > frame_duration {
-                    // Try to get next frame from buffer
-                    if let Some(next_frame) = frame_buffer.pop_front() {
-                        *current_frame = next_frame.data;
-                        *last_frame_time = std::time::Instant::now();
+                // Display the newest frame whose pts <= now_time
+                while let Some(front) = frame_buffer.front() {
+                    if front.pts <= now_time {
+                        let next = frame_buffer.pop_front().unwrap();
+                        *current_frame = next.video_data;
+                    } else {
+                        break;
                     }
                 }
 
-                Some(current_frame)
+                Some(current_frame.as_slice())
             }
         }
     }
@@ -95,7 +129,7 @@ impl App {
     // 4. Sending fully-owned Vec<u8> through channel
     fn spawn_demux_decode_thread(video_path: &Path,
                            v_sender: Sender<VideoFrame>,
-                           a_sender: Sender<Vec<f32>>,
+                           a_sender: Sender<AudioFrame>,
                            target_width: u32,
                            target_height: u32) {
         let video_path = video_path.to_owned();
@@ -132,11 +166,12 @@ impl App {
             };
 
             // AUDIO SETUP
-            let (a_index, mut a_decoder, mut resampler) = {
+            let (a_index, a_time_base, mut a_decoder, mut resampler) = {
                 let a_stream = ictx.streams().best(ffmpeg_next::media::Type::Audio)
                     .expect("Failed to get audio stream");
 
                 let a_index = a_stream.index();
+                let a_time_base = a_stream.time_base();
 
                 let a_context = ffmpeg_next::codec::context::Context::from_parameters(a_stream.parameters())
                     .expect("Failed to create audio codec context");
@@ -152,7 +187,7 @@ impl App {
                     44100,
                 ).expect("Failed to create audio resampler");
 
-                (a_index, a_decoder, resampler)
+                (a_index, a_time_base, a_decoder, resampler)
             };
 
 
@@ -175,15 +210,9 @@ impl App {
                             .unwrap_or(0) as f64
                             * f64::from(v_time_base);
 
-                        let video_frame = VideoFrame {
-                            pts,
-                            data: rgb_frame.data(0).to_vec(),
-                        };
+                        let video_data = rgb_frame.data(0).to_vec();
 
-                        if v_sender.send(VideoFrame {
-                            pts,
-                            data: rgb_frame.data(0).to_vec(),
-                        }).is_err() {
+                        if v_sender.send(VideoFrame { pts, video_data }).is_err() {
                             return;
                         }
                     }
@@ -197,17 +226,22 @@ impl App {
                         // Run resampler
                         resampler.run(&frame, &mut resampled_frame).ok();
 
+                        let pts = frame
+                            .pts()
+                            .unwrap_or(0) as f64
+                            * f64::from(stream.time_base());
+
                         // In 'Packed' format, all samples are in data(0)
                         let data = resampled_frame.data(0);
 
                         // Convert the raw byte slice intoo Vec<f32>
-                        let f32_samples: Vec<f32> = data
+                        let samples: Vec<f32> = data
                             .chunks_exact(4)
                             .map(|chunk| f32::from_le_bytes(chunk.try_into().unwrap()))
                             .collect();
 
                         // Send samples to main thread
-                        if a_sender.send(f32_samples).is_err() { return; }
+                        if a_sender.send(AudioFrame {pts, samples}).is_err() { return; }
                     }
                 }
             }
@@ -227,10 +261,10 @@ impl App {
                     .unwrap_or(0) as f64
                     * f64::from(v_time_base);
 
-                let _ = v_sender.send(VideoFrame {
+                if v_sender.send(VideoFrame {
                     pts,
-                    data: rgb_frame.data(0).to_vec(),
-                });
+                    video_data: rgb_frame.data(0).to_vec(),
+                }).is_err() { return; }
             }
 
             // Audio flush
@@ -240,19 +274,25 @@ impl App {
                 let mut resampled_frame = ffmpeg_next::util::frame::audio::Audio::empty();
                 resampler.run(&a_frame, &mut resampled_frame).ok();
 
+
+                let pts = a_frame
+                    .pts()
+                    .unwrap_or(0) as f64
+                    * f64::from(a_time_base);
+
                 let data = resampled_frame.data(0);
-                let f32_samples: Vec<f32> = data
+                let samples: Vec<f32> = data
                     .chunks_exact(4)
                     .map(|chunk| f32::from_le_bytes(chunk.try_into().unwrap()))
                     .collect();
-                let _ = a_sender.send(f32_samples);
+                if a_sender.send(AudioFrame {pts, samples}).is_err() { return};
             }
         });
     }
 
     // Sets up CPAL audio output stream with given sample receiver
     // Starts an audio output stream on the default output device
-    fn setup_audio(receiver: Receiver<Vec<f32>>) -> cpal::Stream {
+    fn setup_audio(receiver: Receiver<AudioFrame>, clock: Arc<AudioClock>) -> cpal::Stream {
         use cpal::traits::DeviceTrait;
 
         // Get platform default audio backend and default output device
@@ -310,87 +350,108 @@ impl App {
                 let stream = device
                     .build_output_stream(
                         &config,
-                        move |data: &mut [f32], _: &cpal::OutputCallbackInfo| {
-                            while let Ok(samples) = receiver.try_recv() {
-                                sample_queue.extend(samples);
-                            }
-                            for s in data.iter_mut() {
-                                *s = sample_queue.pop_front().unwrap_or(0.0);
-                            }
-                        },
-                        err_fn,
-                        None,
-                    )
-                    .expect("Failed to build audio stream");
-                stream.play().expect("Failed to play audio stream");
-                stream
-            }
-            cpal::SampleFormat::I16 => {
-                let stream = device
-                    .build_output_stream(
-                        &config,
-                        move |data: &mut [i16], _: &cpal::OutputCallbackInfo| {
-                            while let Ok(samples) = receiver.try_recv() {
-                                sample_queue.extend(samples);
-                            }
-                            for s in data.iter_mut() {
-                                let f = sample_queue
-                                    .pop_front().unwrap_or(0.0).clamp(-1.0, 1.0);
-                                *s = (f * i16::MAX as f32) as i16;
+                        {
+                            let receiver = receiver.clone();
+                            let clock = Arc::clone(&clock);
+                            move |data: &mut [f32], _: &cpal::OutputCallbackInfo| {
+                                while let Ok(chunk) = receiver.try_recv() {
+                                    sample_queue.extend(chunk.samples);
+                                }
+
+                                for s in data.iter_mut() {
+                                    *s = sample_queue.pop_front().unwrap_or(0.0);
+                                    clock.samples_played.fetch_add(1, Ordering::Relaxed);
+                                }
                             }
                         },
                         err_fn,
                         None,
-                    )
-                    .expect("Failed to build audio stream");
-                stream.play().expect("Failed to play audio stream");
-                stream
-            }
-            cpal::SampleFormat::U16 => {
-                let stream = device
-                    .build_output_stream(
-                        &config,
-                        move |data: &mut [u16], _: &cpal::OutputCallbackInfo| {
-                            while let Ok(samples) = receiver.try_recv() {
-                                sample_queue.extend(samples);
-                            }
-                            for s in data.iter_mut() {
-                                let f = sample_queue.pop_front().unwrap_or(0.0).clamp(-1.0, 1.0);
-                                // Map [-1, 1] -> [0, u16::MAX]
-                                *s = (((f + 1.0) * 0.5) * u16::MAX as f32) as u16;
-                            }
-                        },
-                        err_fn,
-                        None,
-                    )
-                    .expect("Failed to build audio stream");
-                stream.play().expect("Failed to play audio stream");
-                stream
-            }
-            cpal::SampleFormat::I32 => {
-                let stream = device
-                    .build_output_stream(
-                        &config,
-                        move |data: &mut [i32], _: &cpal::OutputCallbackInfo| {
-                            while let Ok(samples) = receiver.try_recv() {
-                                sample_queue.extend(samples);
-                            }
-                            for s in data.iter_mut() {
-                                let f = sample_queue.pop_front().unwrap_or(0.0).clamp(-1.0, 1.0);
-                                *s = (f * i32::MAX as f32) as i32;
-                            }
-                        },
-                        err_fn,
-                        None,
-                    )
-                    .expect("Failed to build audio stream");
+                    ).expect("Failed to build audio stream");
                 stream.play().expect("Failed to play audio stream");
                 stream
             }
 
-            _ => {
-                panic!("Unsupported sample format: {:?}", sample_format);
+            cpal::SampleFormat::I16 => {
+                let stream = device
+                    .build_output_stream(
+                        &config,
+                        {
+                            let receiver = receiver.clone();
+                            let clock = Arc::clone(&clock);
+                            move |data: &mut [i16], _: &cpal::OutputCallbackInfo| {
+                                while let Ok(chunk) = receiver.try_recv() {
+                                    sample_queue.extend(chunk.samples);
+                                }
+
+                                for s in data.iter_mut() {
+                                    let f = sample_queue.pop_front()
+                                        .unwrap_or(0.0)
+                                        .clamp(-1.0, 1.0);
+                                    *s = (f * i16::MAX as f32) as i16;
+                                    clock.samples_played.fetch_add(1, Ordering::Relaxed);
+                                }
+                            }
+                        },
+                        err_fn,
+                        None,
+                    ).expect("Failed to build audio stream");
+                stream.play().expect("Failed to play audio stream");
+                stream
             }
+
+            cpal::SampleFormat::U16 => {
+                let stream = device
+                    .build_output_stream(
+                        &config,
+                        {
+                            let receiver = receiver.clone();
+                            let clock = Arc::clone(&clock);
+                            move |data: &mut [u16], _: &cpal::OutputCallbackInfo| {
+                                while let Ok(chunk) = receiver.try_recv() {
+                                    sample_queue.extend(chunk.samples);
+                                }
+                                for s in data.iter_mut() {
+                                    let f = sample_queue.pop_front()
+                                        .unwrap_or(0.0)
+                                        .clamp(-1.0, 1.0);
+                                    *s = (((f + 1.0) * 0.5) * u16::MAX as f32) as u16;
+                                    clock.samples_played.fetch_add(1, Ordering::Relaxed);
+                                }
+                            }
+                        },
+                        err_fn,
+                        None,
+                    ).expect("Failed to build audio stream");
+                stream.play().expect("Failed to play audio stream");
+                stream
+            }
+
+            cpal::SampleFormat::I32 => {
+                let stream = device.build_output_stream(
+                    &config,
+                    {
+                        let receiver = receiver.clone();
+                        let clock = Arc::clone(&clock);
+                        move |data: &mut [i32], _: &cpal::OutputCallbackInfo| {
+                            while let Ok(chunk) = receiver.try_recv() {
+                                sample_queue.extend(chunk.samples);
+                            }
+
+                            for s in data.iter_mut() {
+                                let f = sample_queue.pop_front().unwrap_or(0.0).clamp(-1.0, 1.0);
+                                *s = (f * i32::MAX as f32) as i32;
+                                clock.samples_played.fetch_add(1, Ordering::Relaxed);
+                            }
+                        }
+                    },
+                    err_fn,
+                    None,
+                ).expect("Failed to build audio stream");
+                stream.play().expect("Failed to play audio stream");
+                stream
+            }
+
+            _ => panic!("Unsupported sample format: {:?}", sample_format),
         }
     }
 
@@ -404,6 +465,7 @@ impl Default for App {
             frame_source: None,
             audio_receiver: None,
             audio_stream: None,
+            audio_clock: None,
             video_height: 0,
             video_width: 0,
         }
@@ -469,10 +531,13 @@ impl ApplicationHandler for App {
 
         // Setup channels (One for video, one for audio)
         let (v_sender, v_receiver) = bounded::<VideoFrame>(FRAME_BUFFER_SIZE);
-        let (a_sender, a_receiver) = bounded(200);
+        let (a_sender, a_receiver) = bounded::<AudioFrame>(200);
+
+        let clock = Arc::new(AudioClock::new(44_100));
 
         // Initialize CPAL audio stream
-        let stream = Self::setup_audio(a_receiver);
+        let stream = Self::setup_audio(a_receiver, Arc::clone(&clock));
+        self.audio_clock = Some(clock);
         self.audio_stream = Some(stream);
 
         // Start worker thread to decode video frames
@@ -485,6 +550,7 @@ impl ApplicationHandler for App {
             current_frame: vec![0; (self.video_width * self.video_height * 4) as usize], // Black initial frame
             fps,  // Adjust
             last_frame_time: std::time::Instant::now(),
+            start_instant: std::time::Instant::now(),
         });
 
 
@@ -522,7 +588,7 @@ impl ApplicationHandler for App {
                 // Asking: What image data should I draw now?
                 // Static image will always return the same data
                 // Video will return next frame based on timing
-                let frame_data = Self::current_frame(&mut self.frame_source);
+                let frame_data = Self::current_frame(&mut self.frame_source, self.audio_clock.as_ref());
 
                 // Borrow pixels and window
                 // Check if  we have rendering tools
