@@ -199,15 +199,18 @@ impl App {
         });
     }
 
+    // Sets up CPAL audio output stream with given sample receiver
+    // Starts an audio output stream on the default output device
     fn setup_audio(receiver: Receiver<Vec<f32>>) -> cpal::Stream {
         use cpal::traits::DeviceTrait;
 
+        // Get platform default audio backend and default output device
         let host = cpal::default_host();
         let device = host
             .default_output_device()
             .expect("No output device found");
 
-        // Pick a config the device actually supports (prefer 2ch, 44100Hz, f32).
+        // Query and select supported stream config
         let supported_configs = device
             .supported_output_configs()
             .expect("Failed to query supported output configs");
@@ -244,9 +247,13 @@ impl App {
         let sample_format = supported.sample_format();
 
         // Keep track of samples across callbacks
+        // FIFO queue to hold audio samples
+        // Crucial for real-time audio. The audio hardware calls back periodically asking for more samples.
+        // Queueing decouples the production of samples from their consumption.
         let mut sample_queue: VecDeque<f32> = VecDeque::new();
         let err_fn = |err| eprintln!("Audio stream error: {}", err);
 
+        // Build and run the output stream based on sample format
         match sample_format {
             cpal::SampleFormat::F32 => {
                 let stream = device
