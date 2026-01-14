@@ -425,7 +425,8 @@ impl App {
         }
 
         let supported = best.expect("No supported output config found");
-        let config: cpal::StreamConfig = supported.clone().into();
+        let mut config: cpal::StreamConfig = supported.clone().into();
+        config.buffer_size = cpal::BufferSize::Fixed(1024); // Set buffer size to 1024 frames
         println!("Audio config: Channels={}, SampleRate={}, Format={:?}", config.channels, config.sample_rate, supported.sample_format());
 
         (device, supported.clone().into(), supported.sample_format())
