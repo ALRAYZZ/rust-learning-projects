@@ -11,12 +11,12 @@ use winit::window::{Window, WindowAttributes, WindowId};
 use std::path::Path;
 use std::sync::atomic::{AtomicU64, Ordering};
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
-use std::mem;
+use std::mem::size_of;
 use ffmpeg_next::codec::Audio;
+use ffmpeg_next::Packet;
 
-// const WIDTH: u32 = 320;
-// const HEIGHT: u32 = 240;
 const FRAME_BUFFER_SIZE: usize = 30; // Buffer 30 frames ahead to avoid stutter
+const AUDIO_BUFFER_SIZE: usize = 1000; // Buffer 1000 audio frames ahead
 
 // Struct to hold video frame data and timestamp
 struct VideoFrame {
@@ -26,7 +26,7 @@ struct VideoFrame {
 
 struct AudioFrame {
     pts: f64,
-    samples: Vec<f32>, // Interleaved stereo samples
+    samples: Vec<f32>, // Interleaved samples
 }
 
 struct AudioClock {
@@ -151,238 +151,224 @@ impl App {
     ) {
         let video_path = video_path.to_owned();
 
-        thread::spawn(move || {
-           ffmpeg_next::init().ok();
-            let mut ictx = ffmpeg_next::format::input(&video_path)
+        // Channels for packets
+        let (video_packet_sender, video_packet_receiver) = bounded::<Option<Packet>>(100);
+        let (audio_packet_sender, audio_packet_receiver) = bounded::<Option<Packet>>(100);
+
+        // Demux thread: Reads packets and dispatches to video/audio decoders
+        let demux_path= video_path.clone();
+        let demux_handle = thread::spawn(move || {
+            ffmpeg_next::init().ok();
+            let mut ictx = ffmpeg_next::format::input(&demux_path)
                 .expect("Failed to open video file");
 
-            // VIDEO SETUP
-            let (v_index, v_time_base, mut v_decoder, mut scaler) = {
-                let v_stream = ictx.streams().best(ffmpeg_next::media::Type::Video)
-                    .expect("Failed to get video stream");
+            let video_stream = ictx.streams().best(ffmpeg_next::media::Type::Video)
+                .expect("Failed to get video stream");
+            let audio_stream = ictx.streams().best(ffmpeg_next::media::Type::Audio)
+                .expect("Failed to get audio stream");
 
-                let v_index = v_stream.index();
-                let v_time_base = v_stream.time_base();
+            let v_index = video_stream.index();
+            let a_index = audio_stream.index();
 
-                let v_context = ffmpeg_next::codec::context::Context::from_parameters(
-                    v_stream.parameters())
-                    .expect("Failed to create video codec context");
-                let mut v_decoder = v_context.decoder().video().unwrap();
-
-                let scaler = ffmpeg_next::software::scaling::Context::get(
-                    v_decoder.format(),
-                    v_decoder.width(),
-                    v_decoder.height(),
-                    ffmpeg_next::format::Pixel::RGBA,
-                    target_width,
-                    target_height,
-                    ffmpeg_next::software::scaling::flag::Flags::BILINEAR,
-                ).unwrap();
-
-                (v_index, v_time_base, v_decoder, scaler)
-            };
-
-            // AUDIO SETUP
-            let (a_index, a_time_base, mut a_decoder, mut resampler) = {
-                let a_stream = ictx.streams().best(ffmpeg_next::media::Type::Audio)
-                    .expect("Failed to get audio stream");
-
-                let a_index = a_stream.index();
-                let a_time_base = a_stream.time_base();
-
-                let a_context = ffmpeg_next::codec::context::Context::from_parameters(a_stream.parameters())
-                    .expect("Failed to create audio codec context");
-
-                let mut a_decoder = a_context.decoder().audio().unwrap();
-
-                // Dynamic target channel layout based on device channels
-                let target_layout = ffmpeg_next::
-                channel_layout::ChannelLayout::default(target_channels as i32);
-
-                let mut resampler = ffmpeg_next::software::resampling::Context::get(
-                    a_decoder.format(),
-                    a_decoder.channel_layout(),
-                    a_decoder.rate(),
-                    ffmpeg_next::format::Sample::F32(ffmpeg_next::format::sample::Type::Packed),
-                    target_layout,
-                    sample_rate,
-                ).expect("Failed to create audio resampler");
-
-                (a_index, a_time_base, a_decoder, resampler)
-            };
-
-
-
-
-            // Unified LOOP to read packets and decode
+            // Loop over packets
             for (stream, packet) in ictx.packets() {
                 if stream.index() == v_index {
-                    // Handle video packet
-                    v_decoder.send_packet(&packet).ok();
-                    let mut frame = ffmpeg_next::util::frame::Video::empty();
-
-                    while v_decoder.receive_frame(&mut frame).is_ok() {
-                        let mut rgb_frame = ffmpeg_next::util::frame::Video::empty();
-                        scaler.run(&frame, &mut rgb_frame).ok();
-
-                        // Convert FFmpeg PTS → seconds
-                        let pts = frame
-                            .pts()
-                            .unwrap_or(0) as f64
-                            * f64::from(v_time_base);
-
-                        // Convert to packed RGBA
-                        let video_data = video_frame_to_rgba_packed(&rgb_frame, target_width, target_height);
-
-                        if v_sender.send(VideoFrame { pts, video_data }).is_err() {
-                            return;
-                        }
+                    if video_packet_sender.send(Some(packet)).is_err() {
+                        return;
                     }
                 } else if stream.index() == a_index {
-                    // Handle audio packet
-                    a_decoder.send_packet(&packet).ok();
-                    let mut frame = ffmpeg_next::util::frame::Audio::empty();
-
-                    while a_decoder.receive_frame(&mut frame).is_ok() {
-                        let mut out = ffmpeg_next::util::frame::audio::Audio::empty();
-
-                        // Run resampler with error handling
-                        if resampler.run(&frame, &mut out).is_err() {
-                            continue;
-                        }
-
-                        let pts = frame
-                            .pts()
-                            .unwrap_or(0) as f64
-                            * f64::from(a_time_base);
-
-                        // Dynamically determine channels
-                        let channels = target_channels as usize;
-                        let total_f32 = (out.samples() as usize) * channels;
-
-                        let bytes = out.data(0);
-                        let need_bytes = total_f32 * mem::size_of::<f32>();
-
-                        // If not enough data, skip this frame
-                        if bytes.len() < need_bytes {
-                            continue;
-                        }
-
-                        // Interpret bytes as f32 samples
-                        let mut samples = vec![0f32; total_f32];
-                        let src = &bytes[..need_bytes];
-
-                        // Convert bytes to f32 samples avoid allignment issues
-                        for (i, chunk) in src.chunks_exact(4).take(total_f32).enumerate() {
-                            samples[i] = f32::from_ne_bytes(chunk.try_into().unwrap());
-                        }
-
-                        if a_sender.send(AudioFrame {pts, samples}).is_err() {
-                            return;
-                        }
+                    if audio_packet_sender.send(Some(packet)).is_err() {
+                        return;
                     }
                 }
             }
 
-            // Potential refactor into "process video frame" and "process audio frame" functions
-            // Flush decoders
+            // Send EOF signals to decoders
+            let _ = video_packet_sender.send(None);
+            let _ = audio_packet_sender.send(None);
+        });
 
-            // Video flush
-            v_decoder.send_eof().ok();
-            let mut v_frame = ffmpeg_next::util::frame::Video::empty();
-            while v_decoder.receive_frame(&mut v_frame).is_ok() {
-                let mut rgb_frame = ffmpeg_next::util::frame::Video::empty();
-                scaler.run(&v_frame, &mut rgb_frame).ok();
+        // Video decode thread
+        let video_path_clone = video_path.clone();
+        let v_sender_clone = v_sender.clone();
+        let video_decode_handle = thread::spawn(move || {
+            ffmpeg_next::init().ok();
+            let ictx = ffmpeg_next::format::input(&video_path_clone)
+                .expect("Failed to open video file for video decoding");
 
-                let pts = v_frame
-                    .pts()
-                    .unwrap_or(0) as f64
-                    * f64::from(v_time_base);
+            let v_stream = ictx.streams().best(ffmpeg_next::media::Type::Video)
+                .expect("No video stream found");
+            let v_time_base = v_stream.time_base();
 
-                if v_sender.send(VideoFrame {
-                    pts,
-                    video_data: rgb_frame.data(0).to_vec(),
-                }).is_err() { return; }
+            let v_context = ffmpeg_next::codec::context::Context::from_parameters(v_stream.parameters())
+                .expect("Failed to create video codec context");
+            let mut v_decoder = v_context.decoder().video().unwrap();
+
+            let mut scaler = ffmpeg_next::software::scaling::Context::get(
+                v_decoder.format(),
+                v_decoder.width(),
+                v_decoder.height(),
+                ffmpeg_next::format::Pixel::RGBA,
+                target_width,
+                target_height,
+                ffmpeg_next::software::scaling::flag::Flags::BILINEAR,
+            ).unwrap();
+
+            loop {
+                let packet_opt = video_packet_receiver.recv().ok();
+
+                let is_eof = matches!(packet_opt, Some(None) | None);
+                match packet_opt {
+                    Some(Some(packet)) => {
+                        v_decoder.send_packet(&packet).ok();
+                    }
+                    Some(None) | None =>  {
+                        v_decoder.send_eof().ok();
+                    }
+                }
+
+                let mut frame = ffmpeg_next::util::frame::Video::empty();
+                while v_decoder.receive_frame(&mut frame).is_ok() {
+                    let mut rgb_frame = ffmpeg_next::util::frame::Video::empty();
+                    scaler.run(&frame, &mut rgb_frame).ok();
+
+                    let pts = frame
+                        .pts()
+                        .unwrap_or(0) as f64
+                        * f64::from(v_time_base);
+
+                    let video_data = video_frame_to_rgba_packed(&rgb_frame, target_width, target_height);
+
+                    if v_sender_clone.send(VideoFrame { pts, video_data }).is_err() {
+                        return;
+                    }
+                }
+
+                if is_eof {
+                    break;
+                }
             }
+        });
 
-            // Audio flush
-            a_decoder.send_eof().ok();
-            let mut a_frame = ffmpeg_next::util::frame::Audio::empty();
-            while a_decoder.receive_frame(&mut a_frame).is_ok() {
-                let mut out = ffmpeg_next::util::frame::audio::Audio::empty();
+        // Audio decode thread
+        let audio_path_clone = video_path.clone();
+        let a_sender_clone = a_sender.clone();
+        let audio_decode_handle = thread::spawn(move || {
+            ffmpeg_next::init().ok();
+            let ictx = ffmpeg_next::format::input(&audio_path_clone)
+                .expect("Failed to open video file for audio decoding");
 
-                // Run resampler
-               if resampler.run(&a_frame, &mut out).is_err() {
-                   continue;
-               }
+            let a_stream = ictx.streams().best(ffmpeg_next::media::Type::Audio)
+                .expect("No audio stream found");
+            let a_time_base = a_stream.time_base();
 
-                let pts = a_frame
-                    .pts()
-                    .unwrap_or(0) as f64
-                    * f64::from(a_time_base);
+            let a_context = ffmpeg_next::codec::context::Context::from_parameters(a_stream.parameters())
+                .expect("Failed to create audio codec context");
 
-                // Packed f32 stereo
-                let channels = target_channels as usize;
-                let total_f32 = out.samples() * channels;
+            let mut a_decoder = a_context.decoder().audio().unwrap();
 
-                let bytes = out.data(0);
-                let need_bytes = total_f32 * mem::size_of::<f32>();
+            let target_layout = ffmpeg_next::channel_layout::ChannelLayout::default(target_channels as i32);
 
-                // If not enough data, skip this frame
-                if bytes.len() < need_bytes {
-                    continue;
+            let mut resampler = ffmpeg_next::software::resampling::Context::get(
+                a_decoder.format(),
+                a_decoder.channel_layout(),
+                a_decoder.rate(),
+                ffmpeg_next::format::Sample::F32(ffmpeg_next::format::sample::Type::Packed),
+                target_layout,
+                sample_rate,
+            ).expect("Failed to create audio resampler");
+
+            loop {
+                let packet_opt = audio_packet_receiver.recv().ok();
+
+                // Capture EOF state
+                let is_eof = matches!(packet_opt, Some(None) | None);
+
+                match packet_opt {
+                    Some(Some(packet)) => {
+                        a_decoder.send_packet(&packet).ok();
+                    }
+                    Some(None) | None =>  {
+                        a_decoder.send_eof().ok();
+                    }
                 }
 
-                // Interpret bytes as f32 samples
-                let src = &bytes[..need_bytes];
-                let mut samples = vec![0f32; total_f32];
-
-                // Convert bytes to f32 samples avoid allignment issues
-                for (i, chunk) in src.chunks_exact(4).take(total_f32).enumerate() {
-                    samples[i] = f32::from_ne_bytes(chunk.try_into().unwrap());
-                }
-
-                if a_sender.send(AudioFrame {pts, samples}).is_err() {
-                    return;
-                }
-
-                // Drain resampler buffer
-                loop  {
+                let mut frame = ffmpeg_next::util::frame::Audio::empty();
+                while a_decoder.receive_frame(&mut frame).is_ok() {
                     let mut out = ffmpeg_next::util::frame::audio::Audio::empty();
 
-                    // Pass empty input → flush mode
-                    let res = resampler.run(&ffmpeg_next::util::frame::audio::Audio::empty(), &mut out);
-                    match res {
-                        Ok(None) => break,               // No more samples, done draining
-                        Ok(Some(_delay)) => { /* proceed */ },
-                        Err(_) => break,              // Error → stop (rare)
-                    }
-
-                    let channels = target_channels as usize;
-                    let total_f32 = (out.samples() as usize) * channels;
-                    if total_f32 == 0 {
+                    if resampler.run(&frame, &mut out).is_err() {
                         continue;
                     }
 
+                    let pts = frame.pts().unwrap_or(0) as f64 * f64::from(a_time_base);
+
+                    let channels = target_channels as usize;
+                    let total_f32 = out.samples() * channels;
+
                     let bytes = out.data(0);
-                    let need_bytes = total_f32 * std::mem::size_of::<f32>();
+                    let need_bytes = total_f32 * size_of::<f32>();
+
                     if bytes.len() < need_bytes {
-                        continue;  // Incomplete frame, skip
+                        continue;
                     }
 
-                    let src = &bytes[..need_bytes];
                     let mut samples = vec![0f32; total_f32];
+                    let src = &bytes[..need_bytes];
 
                     for (i, chunk) in src.chunks_exact(4).take(total_f32).enumerate() {
                         samples[i] = f32::from_ne_bytes(chunk.try_into().unwrap());
                     }
 
-                    if a_sender.send(AudioFrame { pts, samples }).is_err() {
+                    if a_sender_clone.send(AudioFrame { pts, samples }).is_err() {
                         return;
                     }
                 }
+
+                if is_eof {
+                    // Drain resampler
+                    loop {
+                        let mut out = ffmpeg_next::util::frame::audio::Audio::empty();
+                        let res = resampler
+                            .run(&ffmpeg_next::util::frame::audio::Audio::empty(), &mut out);
+                        if let Ok(samples_produced) = res {
+                            if samples_produced.is_none() {
+                                break;
+                            }
+                        } else {
+                            break;
+                        }
+
+                        let pts = 0.0; // Flush pts
+
+                        let channels = target_channels as usize;
+                        let total_f32 = out.samples() * channels;
+
+                        let bytes = out.data(0);
+                        let need_bytes = total_f32 * size_of::<f32>();
+
+                        if bytes.len() < need_bytes {
+                            continue;
+                        }
+
+                        let mut samples = vec![0f32; total_f32];
+                        let src = &bytes[..need_bytes];
+
+                        for (i, chunk) in src.chunks_exact(4).take(total_f32).enumerate() {
+                            samples[i] = f32::from_ne_bytes(chunk.try_into().unwrap());
+                        }
+
+                        if a_sender_clone.send(AudioFrame { pts, samples }).is_err() {
+                            return;
+                        }
+                    }
+                    break;
+                }
             }
         });
+
+        // Keep handles alive
+        let _ = (demux_handle, video_decode_handle, audio_decode_handle);
     }
 
     fn get_audio_config() -> (cpal::Device, cpal::StreamConfig, cpal::SampleFormat) {
@@ -426,10 +412,17 @@ impl App {
 
         let supported = best.expect("No supported output config found");
         let mut config: cpal::StreamConfig = supported.clone().into();
-        config.buffer_size = cpal::BufferSize::Fixed(1024); // Set buffer size to 1024 frames
-        println!("Audio config: Channels={}, SampleRate={}, Format={:?}", config.channels, config.sample_rate, supported.sample_format());
 
-        (device, supported.clone().into(), supported.sample_format())
+        // Request fixed buffer size for lower latency
+        config.buffer_size = cpal::BufferSize::Fixed(1024);
+
+        println!(
+            "Audio config: Channels={}, SampleRate={}, Format={:?}",
+            config.channels,
+            config.sample_rate,
+            supported.sample_format());
+
+        (device, config, supported.sample_format())
     }
 
     fn build_audio_stream(
@@ -455,9 +448,19 @@ impl App {
                             sample_queue.extend(chunk.samples);
                         }
 
+                        let mut underflow_count = 0u32;
                         for s in data.iter_mut() {
-                            *s = sample_queue.pop_front().unwrap_or(0.0);
+                            if let Some(v) = sample_queue.pop_front() {
+                                *s = v;
+                            } else {
+                                *s = 0.0;
+                                underflow_count += 1;
+                            }
                         }
+                        if underflow_count > 0 {
+                            eprintln!("Audio underflow: {} samples", underflow_count);
+                        }
+
                         // Advance audio clock by number of frames written
                         let frames_written = (data.len() as u64) / channels_u64;
 
@@ -555,12 +558,18 @@ impl App {
                                 sample_queue.extend(chunk.samples);
                             }
 
+                            let mut underflow_count = 0u32;
                             for s in data.iter_mut() {
-                                let f = sample_queue
-                                    .pop_front()
-                                    .unwrap_or(0.0)
-                                    .clamp(-1.0, 1.0);
-                                *s = (f * i32::MAX as f32) as i32;
+                                if let Some(f) = sample_queue.pop_front() {
+                                    let f_clamped = f.clamp(-1.0, 1.0);
+                                    *s = (f_clamped * i32::MAX as f32) as i32;
+                                } else {
+                                    *s = 0;
+                                    underflow_count += 1;
+                                }
+                            }
+                            if underflow_count > 0 {
+                                eprintln!("Audio underflow: {} samples", underflow_count);
                             }
 
                             let frames_written = (data.len() as u64) / channels_u64;
