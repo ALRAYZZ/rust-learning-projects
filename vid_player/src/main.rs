@@ -658,7 +658,7 @@ impl ApplicationHandler for App {
 
         // Setup channels (One for video, one for audio)
         let (v_sender, v_receiver) = bounded::<VideoFrame>(FRAME_BUFFER_SIZE);
-        let (a_sender, a_receiver) = bounded::<AudioFrame>(200);
+        let (a_sender, a_receiver) = bounded::<AudioFrame>(1000);
 
         let clock = Arc::new(AudioClock::new(sample_rate));
 
