@@ -13,6 +13,12 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use winit::monitor::Fullscreen;
 
+// Important notes:
+// Use of unsafe to cast raw bytes to f32 samples. Look into zerocopy or bytemuck for safer conversions.
+// Sync primitives using Arc Mutex, they can cause problems, SPSC ring buffer could be better for audio buffer.
+// Pixels is used for simplicity. Maybe send YUV data to GPU and use fragment shader for conversion and rendering?
+
+
 const VIDEO_BUFFER_FRAMES: usize = 60; // Buffer up to 60 video frames (~2 seconds at 30fps)
 const AUDIO_CHANNEL_SIZE: usize = 100; // Channel can hold 100 audio chunks
 
@@ -453,6 +459,7 @@ impl ApplicationHandler for App {
         }
     }
 
+    // Create window and initialize video/audio
     fn can_create_surfaces(&mut self, event_loop: &dyn ActiveEventLoop) {
         let video_path = Path::new("sample_video.mp4");
 
@@ -495,7 +502,9 @@ impl ApplicationHandler for App {
         let ring_capacity = sample_rate as usize * 2 * 2;
         let ring_buffer = Arc::new(Mutex::new(AudioRingBuffer::new(ring_capacity)));
 
-        // Setup channels
+        // Setup channels for multithreading allowing us to communicate between threads
+        // Making the channels bounded provides backpressure to avoid excessive memory usage
+        // Its an important safety for no memory leaks or OOM crashes
         let (video_tx, video_rx) = bounded(VIDEO_BUFFER_FRAMES);
         let (audio_tx, audio_rx) = bounded(AUDIO_CHANNEL_SIZE);
 
