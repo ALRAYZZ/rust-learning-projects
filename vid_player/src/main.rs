@@ -11,6 +11,7 @@ use winit::window::{Window, WindowAttributes, WindowId};
 use std::path::Path;
 use std::sync::atomic::{AtomicU64, Ordering};
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
+use winit::monitor::Fullscreen;
 
 const VIDEO_BUFFER_FRAMES: usize = 60; // Buffer up to 60 video frames (~2 seconds at 30fps)
 const AUDIO_CHANNEL_SIZE: usize = 100; // Channel can hold 100 audio chunks
@@ -523,7 +524,9 @@ impl ApplicationHandler for App {
         // Create window
         let attrs = WindowAttributes::default()
             .with_surface_size(LogicalSize::new(self.width, self.height))
-            .with_title("Rust Video Player");
+            .with_title("Rust Video Player")
+            .with_decorations(false)
+            .with_fullscreen(Some(Fullscreen::Borderless(None)));
 
         let window = Arc::new(event_loop.create_window(attrs).unwrap());
         let size = window.surface_size();
