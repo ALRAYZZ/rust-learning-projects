@@ -410,6 +410,7 @@ impl App {
         self.audio_clock.current_time()
     }
 
+    // Calculate playback progress (0.0 to 1.0)
     fn playback_progress(&self) -> f64 {
         if self.duration_secs <= 0.0 {
             return 0.0;
@@ -531,6 +532,9 @@ impl ApplicationHandler for App {
             WindowEvent::RedrawRequested => {
                 // Update frame state
                 self.process_next_frame();
+
+                let progress = self.playback_progress();
+                println!("Playback progress: {:.2}%", progress * 100.0);
 
                 // Render current frame
                 if !self.current_frame.is_empty() {
