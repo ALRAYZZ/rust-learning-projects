@@ -419,6 +419,28 @@ impl App {
         let progress = self.current_time_secs() / self.duration_secs;
         progress.clamp(0.0, 1.0)
     }
+
+    fn draw_rect(
+        frame: &mut [u8],
+        frame_width: u32,
+        frame_height: u32,
+        x: u32,
+        y: u32,
+        rect_width: u32,
+        rect_height: u32,
+        color: [u8; 4],
+    ) {
+        let frame_width = frame_width as usize;
+        let frame_height = frame_height as usize;
+
+        // Draw solid rectangle into frame buffer
+        for yy in y..(y + rect_height).min(frame_height as u32) {
+            for xx in x..(x + rect_width).min(frame_width as u32) {
+                let idx = ((yy as usize * frame_width) + xx as usize) * 4;
+                frame[idx..idx + 4].copy_from_slice(&color);
+            }
+        }
+    }
 }
 
 impl ApplicationHandler for App {
@@ -536,15 +558,29 @@ impl ApplicationHandler for App {
                 let progress = self.playback_progress();
                 println!("Playback progress: {:.2}%", progress * 100.0);
 
-                // Render current frame
-                if !self.current_frame.is_empty() {
-                    if let Some(pixels) = self.pixels.as_mut() {
-                        pixels.frame_mut().copy_from_slice(&self.current_frame);
+                // Get dimensions
+                let w = self.width;
+                let h = self.height;
+                let bar_height: u32 = 8;
+                let y = h.saturating_sub(bar_height);
+                let filled_width = (w as f64 * progress) as u32;
 
-                        if pixels.render().is_err() {
-                            event_loop.exit();
-                            return;
-                        }
+                if let Some(pixels) = self.pixels.as_mut() {
+                    let frame = pixels.frame_mut();
+
+                    // Copy the video frame
+                    if !self.current_frame.is_empty() {
+                        frame.copy_from_slice(&self.current_frame);
+                    }
+
+                    // Draw the progress bar on top
+                    Self::draw_rect(frame, w, h, 0, y, w, bar_height, [50, 50, 50, 255]);
+                    Self::draw_rect(frame, w, h, 0, y, filled_width, bar_height, [0, 200, 0, 255]);
+
+                    // Render to screen
+                    if pixels.render().is_err() {
+                        event_loop.exit();
+                        return;
                     }
                 }
 
