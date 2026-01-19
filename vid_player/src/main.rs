@@ -357,6 +357,9 @@ struct App {
     // Dimensions
     width: u32,
     height: u32,
+
+    // Playback time
+    duration_secs: f64,
 }
 
 impl App {
@@ -371,6 +374,7 @@ impl App {
             audio_clock: Arc::new(AudioClock::new(48000)),
             width: 0,
             height: 0,
+            duration_secs: 0.0,
         }
     }
 
@@ -401,6 +405,19 @@ impl App {
             }
         }
     }
+
+    fn current_time_secs(&self) -> f64 {
+        self.audio_clock.current_time()
+    }
+
+    fn playback_progress(&self) -> f64 {
+        if self.duration_secs <= 0.0 {
+            return 0.0;
+        }
+
+        let progress = self.current_time_secs() / self.duration_secs;
+        progress.clamp(0.0, 1.0)
+    }
 }
 
 impl ApplicationHandler for App {
@@ -419,6 +436,14 @@ impl ApplicationHandler for App {
         ffmpeg_next::init().ok();
         let input_ctx = ffmpeg_next::format::input(video_path)
             .expect("Failed to open video");
+
+        let duration = input_ctx.duration();
+
+        if duration > 0 {
+            self.duration_secs = duration as f64 / ffmpeg_next::ffi::AV_TIME_BASE as f64;
+        } else {
+            self.duration_secs = 0.0;
+        }
 
         let video_stream = input_ctx
             .streams()
