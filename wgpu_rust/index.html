@@ -1,0 +1,27 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <title>WGPU Learning</title>
+    <style>
+        body { margin: 0; background-color: black; overflow: hidden; }
+        canvas { width: 100vw; height: 100vh; display: block; }
+    </style>
+</head>
+<body>
+<canvas id="canvas"></canvas>
+
+<script type="module">
+    // 1. Import the 'init' function from the pkg folder wasm-pack created
+    // Replace 'wgpu_rust' with whatever your project name is
+    import init from "./pkg/wgpu_rust.js";
+
+    // 2. Run the initialization
+    init().then(() => {
+        console.log("WASM Loaded and Running!");
+    }).catch((e) => {
+        console.error("Error loading WASM:", e);
+    });
+</script>
+</body>
+</html>
