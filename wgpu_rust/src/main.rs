@@ -14,6 +14,7 @@ pub struct State {
     window: Arc<Window>,
 }
 
+// Defined methods for the Window we create
 impl State {
     pub async fn new(window: Arc<Window>) -> anyhow::Result<Self> {
         Ok(Self {
@@ -48,9 +49,11 @@ impl App  {
     }
 }
 
+// ApplicationHandler is a trait that allows us to handle application-level events
+// like window creation, user events, and window events
 impl ApplicationHandler<State> for App {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
-        #[allow(unused_mut)]
+        #[allow(unused_mut)] // To avoid warnings on non-wasm32 targets
         let mut window_attributes = Window::default_attributes();
 
         #[cfg(target_arch = "wasm32")]
@@ -60,6 +63,8 @@ impl ApplicationHandler<State> for App {
 
             const CANVAS_ID: &str = "canvas";
 
+            // On web, we need to get the canvas element from the HTML document
+            // and set it in the window attributes, then create the window
             let window = wgpu::web_sys::window().unwrap_throw();
             let document = window.document().unwrap_throw();
             let canvas = document.get_element_by_id(CANVAS_ID).unwrap_throw();
@@ -105,6 +110,7 @@ impl ApplicationHandler<State> for App {
         self.state = Some(event);
     }
 
+    // Handle window events like resize, close, redraw, keyboard input
     fn window_event(
         &mut self,
         event_loop: &ActiveEventLoop,
@@ -137,6 +143,27 @@ impl ApplicationHandler<State> for App {
             _ => {}
         }
     }
+}
+
+// Setup logging and run the event loop
+pub fn run() -> anyhow::Result<()> {
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        env_logger::init();
+    }
+    #[cfg(target_arch = "wasm32")]
+    {
+        console_log::init_with_level(log::Level::Info).unwrap_throw();
+    }
+
+    let event_loop = EventLoop::with_user_event().build()?;
+    let mut app = App::new(
+        #[cfg(target_arch = "wasm32")]
+        &event_loop,
+    );
+    event_loop.run_app(&mut app)?;
+
+    Ok(())
 }
 
 fn main() {
