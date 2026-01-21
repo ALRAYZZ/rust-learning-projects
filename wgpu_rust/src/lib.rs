@@ -10,6 +10,9 @@ use winit::{
 #[cfg(target_arch = "wasm32")]
 use wasm_bindgen::prelude::*;
 
+// THE ENGINE
+// GPU context. Live inside APP, holds device, queue, surface, config, translates logic into
+// binary commands for GPU
 pub struct State {
     surface: wgpu::Surface<'static>,
     device: wgpu::Device,
@@ -177,6 +180,9 @@ impl State {
     }
 }
 
+// THE ORCHESTRATOR
+// Manages OS lifecycle. Speaks to winit to create windows, handle events, etc
+// Does not care about rendering, but that there is a window to render to
 pub struct App {
     #[cfg(target_arch = "wasm32")]
     proxy: Option<winit::event_loop::EventLoopProxy<State>>,
