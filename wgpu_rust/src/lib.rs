@@ -11,13 +11,87 @@ use winit::{
 use wasm_bindgen::prelude::*;
 
 pub struct State {
+    surface: wgpu::Surface<'static>,
+    device: wgpu::Device,
+    queue: wgpu::Queue,
+    config: wgpu::SurfaceConfiguration,
+    is_surface_configured: bool,
     window: Arc<Window>,
 }
 
 // Defined methods for the Window we create
 impl State {
-    pub async fn new(window: Arc<Window>) -> anyhow::Result<Self> {
+    // Handshake with GPU to see what it supports and create device/queue
+    pub async fn new(window: Arc<Window>) -> anyhow::Result<State> {
+        let size = window.inner_size();
+
+        // Instance is "The Manager" knows every GPU backend available
+        let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
+            #[cfg(not(target_arch = "wasm32"))]
+            backends: wgpu::Backends::PRIMARY,
+            #[cfg(target_arch = "wasm32")]
+            backends: wgpu::Backends::GL,
+            ..Default::default()
+        });
+
+        // Part of the window that we can draw to
+        // Take this window handle and prepare it to receive raw pixel data from GPU
+        let surface = instance.create_surface(window.clone())?;
+
+        // Handler for graphics card, to get info about it and create device/queue
+        // The actual selected GPU
+        let adapter = instance
+            .request_adapter(&wgpu::RequestAdapterOptions {
+                power_preference: wgpu::PowerPreference::default(),
+                compatible_surface: Some(&surface), // Find adapter compatible with our surface
+                force_fallback_adapter: false, // If true will use software rendering
+            })
+            .await?;
+
+        // Device is connection to GPU, Queue is needed to send commands since
+        // We cannot say to gpu "Draw now" we send commands and wait for gpu to process them
+        let (device, queue) = adapter
+            .request_device(&wgpu::DeviceDescriptor {
+                label: None,
+                required_features: wgpu::Features::empty(),
+                experimental_features: wgpu::ExperimentalFeatures::disabled(),
+                // WebGL doesnt support all wgpu features
+                required_limits: if cfg!(target_arch = "wasm32") {
+                    wgpu::Limits::downlevel_webgl2_defaults()
+                } else {
+                    wgpu::Limits::default()
+                },
+                memory_hints: Default::default(),
+                trace: wgpu::Trace::Off,
+            })
+            .await?;
+
+        // Config for surface. This will define how surface creates SurfaceTextures
+        let surface_caps = surface.get_capabilities(&adapter);
+
+        let surface_format = surface_caps.formats.iter()
+            .find(|f| f.is_srgb())
+            .copied()
+            .unwrap_or(surface_caps.formats[0]);
+
+        // Config where we define how large image is and if we are using vsync etc
+        let config = wgpu::SurfaceConfiguration {
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT, // how surface textures will be used
+            format: surface_format, // how SurfaceTextures will be stored
+            width: size.width, // in pixels, usually matches window size
+            height: size.height,
+            present_mode: surface_caps.present_modes[0], // how to sync surface with display
+            alpha_mode: surface_caps.alpha_modes[0],
+            view_formats: vec![],
+            desired_maximum_frame_latency: 2,
+        };
+
         Ok(Self {
+            surface,
+            device,
+            queue,
+            config,
+            is_surface_configured: false,
             window,
         })
     }
@@ -111,6 +185,7 @@ impl ApplicationHandler<State> for App {
     }
 
     // Handle window events like resize, close, redraw, keyboard input
+    // called by the event loop when such events occur
     fn window_event(
         &mut self,
         event_loop: &ActiveEventLoop,
