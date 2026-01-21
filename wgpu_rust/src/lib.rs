@@ -96,12 +96,84 @@ impl State {
         })
     }
 
-    pub fn resize(&mut self, _width: u32, _height: u32) {
-        // Handle window resizing here
+    // Method to resize the surface when window size changes
+    // Surface is a collection of buffers that need the right memory size to store the needed
+    // amount of pixels, and that amount changes when window is resized
+    pub fn resize(&mut self, width: u32, height: u32) {
+        if width > 0 && height > 0 {
+            self.config.width = width;
+            self.config.height = height;
+            self.surface.configure(&self.device, &self.config);
+            self.is_surface_configured = true;
+        }
     }
 
-    pub fn render(&mut self) {
+
+    // Handle keyboard input events
+    fn handle_key(&self, event_loop: &ActiveEventLoop, code: KeyCode, is_pressed: bool) {
+        match (code, is_pressed) {
+            (KeyCode::Escape, true) => event_loop.exit(),
+            _ => {}
+        }
+    }
+
+    fn update(&mut self) {
+        // TODO
+    }
+
+    pub fn render(&mut self) -> Result<(), wgpu::SurfaceError> {
         self.window.request_redraw();
+
+        // Cant render if surface is not configured
+        if !self.is_surface_configured {
+            return Ok(());
+        }
+
+        // Get the next frame to render to
+        let output = self.surface.get_current_texture()?;
+        // Control how the render interacts with the texture
+        let view = output.texture.create_view(&wgpu::TextureViewDescriptor::default());
+
+        // Create actual commands to send to GPU. Builds a command buffer
+        // Modern graphics expect commands to be stored in a command buffer before being sent
+        let mut encoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("Render Encoder"),
+        });
+
+        // RenderPass has all the methods for actual drawing.
+        // Here we populate with shaders, buffers, textures, etc
+        {
+            // Begin a render pass borrows the encoder mutably so thats why
+            // we have this nested scope so later we can call encoder.finish()
+            let _render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("Render Pass"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &view,
+                    resolve_target: None,
+                    depth_slice: None, // ?
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(wgpu::Color {
+                            r: 0.1,
+                            g: 0.2,
+                            b: 0.3,
+                            a: 1.0,
+                        }),
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: None,
+                occlusion_query_set: None,
+                timestamp_writes: None,
+                multiview_mask: None,
+            });
+        } // Scope ends here, so render_pass is dropped and encoder can be used again
+
+        // Submit commands to GPU queue for execution
+        // Submit will accept anything that implements IntoIterator<Item=&CommandBuffer>
+        self.queue.submit(std::iter::once(encoder.finish()));
+        output.present();
+
+        Ok(())
     }
 }
 
@@ -201,7 +273,18 @@ impl ApplicationHandler<State> for App {
             WindowEvent::CloseRequested => event_loop.exit(),
             WindowEvent::Resized(size) => state.resize(size.width, size.height),
             WindowEvent::RedrawRequested => {
-                state.render();
+                state.update();
+                match state.render() {
+                    Ok(_) => {}
+                    // Reconfigure surface if lost
+                    Err(wgpu::SurfaceError::Lost | wgpu::SurfaceError::Outdated) => {
+                        let size = state.window.inner_size();
+                        state.resize(size.width, size.height);
+                    }
+                    Err(e) => {
+                        log::error!("Unable to render {}", e);
+                    }
+                }
             }
             WindowEvent::KeyboardInput {
                 event:
@@ -211,10 +294,7 @@ impl ApplicationHandler<State> for App {
                     ..
                 },
                 ..
-            } => match (code, key_state.is_pressed()) {
-                (KeyCode::Escape, true) => event_loop.exit(),
-                _ => {}
-            },
+            } => state.handle_key(event_loop, code, key_state.is_pressed()),
             _ => {}
         }
     }
