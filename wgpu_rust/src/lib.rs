@@ -120,6 +120,9 @@ impl State {
         }
     }
 
+    fn handle_mouse_moved(&self, _x: f64, _y: f64) {
+    }
+
     fn update(&mut self) {
         // TODO
     }
@@ -135,6 +138,8 @@ impl State {
         // Get the next frame to render to
         let output = self.surface.get_current_texture()?;
         // Control how the render interacts with the texture
+        // A texture is the 2D array of pixels that we will draw to and then present to screen
+        // Texture view is how we going to use that texture in the render pass
         let view = output.texture.create_view(&wgpu::TextureViewDescriptor::default());
 
         // Create actual commands to send to GPU. Builds a command buffer
@@ -151,17 +156,17 @@ impl State {
             let _render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("Render Pass"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: &view,
-                    resolve_target: None,
-                    depth_slice: None, // ?
+                    view: &view, // specific texture memory to draw to
+                    resolve_target: None, // anti-aliasing resolve target
+                    depth_slice: None, //
                     ops: wgpu::Operations {
                         load: wgpu::LoadOp::Clear(wgpu::Color {
                             r: 0.1,
                             g: 0.2,
                             b: 0.3,
                             a: 1.0,
-                        }),
-                        store: wgpu::StoreOp::Store,
+                        }), // Clear the texture to a color at start of render pass
+                        store: wgpu::StoreOp::Store, // Store the result in memory after render pass
                     },
                 })],
                 depth_stencil_attachment: None,
@@ -224,6 +229,7 @@ impl ApplicationHandler<State> for App {
             window_attributes = window_attributes.with_canvas(Some(html_canvas_element));
         }
 
+        // Create the window
         let window = Arc::new(event_loop.create_window(window_attributes).unwrap());
 
         #[cfg(not(target_arch = "wasm32"))]
