@@ -20,6 +20,7 @@ pub struct State {
     config: wgpu::SurfaceConfiguration,
     is_surface_configured: bool,
     window: Arc<Window>,
+    clear_color: wgpu::Color,
 }
 
 // Defined methods for the Window we create
@@ -89,6 +90,13 @@ impl State {
             desired_maximum_frame_latency: 2,
         };
 
+        let clear_color = wgpu::Color {
+            r: 0.1,
+            g: 0.2,
+            b: 0.3,
+            a: 1.0,
+        };
+
         Ok(Self {
             surface,
             device,
@@ -96,6 +104,7 @@ impl State {
             config,
             is_surface_configured: false,
             window,
+            clear_color,
         })
     }
 
@@ -120,7 +129,19 @@ impl State {
         }
     }
 
-    fn handle_mouse_moved(&self, _x: f64, _y: f64) {
+    fn handle_mouse_moved(&mut self, x: f64, y: f64) {
+        // Get window dimensions
+        let width = self.config.width as f64;
+        let height = self.config.height as f64;
+
+        // Normalize mouse position to [0, 1] range and update clear color
+        // clamp as a safety net in case fast movements report out of bounds values
+        self.clear_color = wgpu::Color {
+            r: (x / width).clamp(0.0, 1.0),
+            g: (y / height).clamp(0.0, 1.0),
+            b: 0.3,
+            a: 1.0,
+        };
     }
 
     fn update(&mut self) {
@@ -160,12 +181,7 @@ impl State {
                     resolve_target: None, // anti-aliasing resolve target
                     depth_slice: None, //
                     ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(wgpu::Color {
-                            r: 0.1,
-                            g: 0.2,
-                            b: 0.3,
-                            a: 1.0,
-                        }), // Clear the texture to a color at start of render pass
+                        load: wgpu::LoadOp::Clear(self.clear_color), // Clear color before drawing
                         store: wgpu::StoreOp::Store, // Store the result in memory after render pass
                     },
                 })],
@@ -297,6 +313,9 @@ impl ApplicationHandler<State> for App {
                         log::error!("Unable to render {}", e);
                     }
                 }
+            }
+            WindowEvent::CursorMoved {position, ..} => {
+                state.handle_mouse_moved(position.x, position.y);
             }
             WindowEvent::KeyboardInput {
                 event:
