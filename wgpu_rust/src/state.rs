@@ -17,6 +17,8 @@ pub struct State {
     render_pipeline: wgpu::RenderPipeline,
 
     vertex_buffer: wgpu::Buffer,
+
+    num_vertices: u32,
 }
 
 // Defined methods for the Window we create
@@ -91,7 +93,7 @@ impl State {
         };
 
         let vertex_buffer = graphics::buffers::create_vertex_buffer(&device, graphics::vertex::VERTICES);
-
+        let num_vertices = graphics::vertex::VERTICES.len() as u32;
         let render_pipeline = graphics::pipeline::create_render_pipeline(&device, &config);
 
         Ok(Self {
@@ -104,6 +106,7 @@ impl State {
             clear_color,
             render_pipeline,
             vertex_buffer,
+            num_vertices,
         })
     }
 
@@ -180,7 +183,14 @@ impl State {
 
             // Here we set the pipeline (shaders + fixed function state) and issue draw commands
             render_pass.set_pipeline(&self.render_pipeline);
-            render_pass.draw(0..3, 0..1);
+
+            // Set the vertex buffer to use
+            // Method 1st param, is what buffer slot to use for this vertex buffer
+            // We can have multiple vertex buffers bound at once (positions, colors, uvs, etc)
+            // Second param, slice of the buffer to use, we can store multiple meshes in one buffer
+            // (..) means use full buffer
+            render_pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
+            render_pass.draw(0..self.num_vertices, 0..1);
         } // Scope ends here, so render_pass is dropped and encoder can be used again
 
         // Submit commands to GPU queue for execution
