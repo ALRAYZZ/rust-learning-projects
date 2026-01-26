@@ -1,5 +1,6 @@
 use std::sync::Arc;
 use winit::window::Window;
+use crate::graphics;
 
 // THE ENGINE
 // GPU context. Live inside APP, holds device, queue, surface, config, translates logic into
@@ -14,6 +15,8 @@ pub struct State {
 
     pub(crate) window: Arc<Window>,
     render_pipeline: wgpu::RenderPipeline,
+
+    vertex_buffer: wgpu::Buffer,
 }
 
 // Defined methods for the Window we create
@@ -87,7 +90,9 @@ impl State {
             a: 1.0,
         };
 
-        let render_pipeline = crate::graphics::pipeline::create_render_pipeline(&device, &config);
+        let vertex_buffer = graphics::buffers::create_vertex_buffer(&device, graphics::vertex::VERTICES);
+
+        let render_pipeline = graphics::pipeline::create_render_pipeline(&device, &config);
 
         Ok(Self {
             surface,
@@ -98,6 +103,7 @@ impl State {
             window,
             clear_color,
             render_pipeline,
+            vertex_buffer,
         })
     }
 
