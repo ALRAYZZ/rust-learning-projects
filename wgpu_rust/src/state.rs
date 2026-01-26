@@ -1,0 +1,187 @@
+use std::sync::Arc;
+use winit::window::Window;
+
+// THE ENGINE
+// GPU context. Live inside APP, holds device, queue, surface, config, translates logic into
+// binary commands for GPU
+pub struct State {
+    surface: wgpu::Surface<'static>,
+    device: wgpu::Device,
+    queue: wgpu::Queue,
+    config: wgpu::SurfaceConfiguration,
+    clear_color: wgpu::Color,
+    is_surface_configured: bool,
+
+    pub(crate) window: Arc<Window>,
+    render_pipeline: wgpu::RenderPipeline,
+}
+
+// Defined methods for the Window we create
+impl State {
+    // Handshake with GPU to see what it supports and create device/queue
+    pub async fn new(window: Arc<Window>) -> anyhow::Result<State> {
+        let size = window.inner_size();
+
+        // Instance is "The Manager" knows every GPU backend available
+        let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
+            backends: wgpu::Backends::PRIMARY,
+            ..Default::default()
+        });
+
+        // Part of the window that we can draw to
+        // Take this window handle and prepare it to receive raw pixel data from GPU
+        let surface = instance.create_surface(window.clone())?;
+
+        // Handler for graphics card, to get info about it and create device/queue
+        // The actual selected GPU
+        let adapter = instance
+            .request_adapter(&wgpu::RequestAdapterOptions {
+                power_preference: wgpu::PowerPreference::default(),
+                compatible_surface: Some(&surface), // Find adapter compatible with our surface
+                force_fallback_adapter: false, // If true will use software rendering
+            })
+            .await?;
+
+        // Device is connection to GPU, Queue is needed to send commands since
+        // We cannot say to gpu "Draw now" we send commands and wait for gpu to process them
+        let (device, queue) = adapter
+            .request_device(&wgpu::DeviceDescriptor {
+                label: None,
+                required_features: wgpu::Features::empty(),
+                experimental_features: wgpu::ExperimentalFeatures::disabled(),
+                // WebGL doesnt support all wgpu features
+                required_limits: if cfg!(target_arch = "wasm32") {
+                    wgpu::Limits::downlevel_webgl2_defaults()
+                } else {
+                    wgpu::Limits::default()
+                },
+                memory_hints: Default::default(),
+                trace: wgpu::Trace::Off,
+            })
+            .await?;
+
+        // Config for surface. This will define how surface creates SurfaceTextures
+        let surface_caps = surface.get_capabilities(&adapter);
+
+        let surface_format = surface_caps.formats.iter()
+            .find(|f| f.is_srgb())
+            .copied()
+            .unwrap_or(surface_caps.formats[0]);
+
+        // Config where we define how large image is and if we are using vsync etc
+        let config = wgpu::SurfaceConfiguration {
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT, // how surface textures will be used
+            format: surface_format, // how SurfaceTextures will be stored
+            width: size.width, // in pixels, usually matches window size
+            height: size.height,
+            present_mode: surface_caps.present_modes[0], // how to sync surface with display
+            alpha_mode: surface_caps.alpha_modes[0],
+            view_formats: vec![],
+            desired_maximum_frame_latency: 2,
+        };
+
+        let clear_color = wgpu::Color {
+            r: 0.1,
+            g: 0.2,
+            b: 0.3,
+            a: 1.0,
+        };
+
+        let render_pipeline = crate::pipeline::create_render_pipeline(&device, &config);
+
+        Ok(Self {
+            surface,
+            device,
+            queue,
+            config,
+            is_surface_configured: false,
+            window,
+            clear_color,
+            render_pipeline,
+        })
+    }
+
+    // Method to resize the surface when window size changes
+    // Surface is a collection of buffers that need the right memory size to store the needed
+    // amount of pixels, and that amount changes when window is resized
+    pub fn resize(&mut self, width: u32, height: u32) {
+        if width > 0 && height > 0 {
+            self.config.width = width;
+            self.config.height = height;
+            self.surface.configure(&self.device, &self.config);
+            self.is_surface_configured = true;
+        }
+    }
+
+    pub fn set_clear_color(&mut self, clear_color: wgpu::Color) {
+        self.clear_color = clear_color;
+    }
+
+    pub fn config(&self) -> &wgpu::SurfaceConfiguration {
+        &self.config
+    }
+
+    pub fn window(&self) -> &Arc<Window> {
+        &self.window
+    }
+
+    pub fn update(&mut self) {
+        // TODO
+    }
+
+    pub fn render(&mut self) -> Result<(), wgpu::SurfaceError> {
+        self.window.request_redraw();
+
+        // Cant render if surface is not configured
+        if !self.is_surface_configured {
+            return Ok(());
+        }
+
+        // Get the next frame to render to
+        let output = self.surface.get_current_texture()?;
+        // Control how the render interacts with the texture
+        // A texture is the 2D array of pixels that we will draw to and then present to screen
+        // Texture view is how we going to use that texture in the render pass
+        let view = output.texture.create_view(&wgpu::TextureViewDescriptor::default());
+
+        // Create actual commands to send to GPU. Builds a command buffer
+        // Modern graphics expect commands to be stored in a command buffer before being sent
+        let mut encoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("Render Encoder"),
+        });
+
+        // RenderPass has all the methods for actual drawing.
+        // Here we populate with shaders, buffers, textures, etc
+        {
+            // Begin a render pass borrows the encoder mutably so thats why
+            // we have this nested scope so later we can call encoder.finish()
+            let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("Render Pass"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &view, // specific texture memory to draw to
+                    resolve_target: None, // anti-aliasing resolve target
+                    depth_slice: None, //
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(self.clear_color), // Clear color before drawing
+                        store: wgpu::StoreOp::Store, // Store the result in memory after render pass
+                    },
+                })],
+                depth_stencil_attachment: None,
+                occlusion_query_set: None,
+                timestamp_writes: None,
+                multiview_mask: None,
+            });
+
+            // Here we set the pipeline (shaders + fixed function state) and issue draw commands
+            render_pass.set_pipeline(&self.render_pipeline);
+            render_pass.draw(0..3, 0..1);
+        } // Scope ends here, so render_pass is dropped and encoder can be used again
+
+        // Submit commands to GPU queue for execution
+        // Submit will accept anything that implements IntoIterator<Item=&CommandBuffer>
+        self.queue.submit(std::iter::once(encoder.finish()));
+        output.present();
+
+        Ok(())
+    }
+}
