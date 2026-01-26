@@ -6,7 +6,7 @@ pub fn create_render_pipeline(
     // Takes the shader file and sends it to GPU driver
     let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: Some("Shader"),
-        source: wgpu::ShaderSource::Wgsl(include_str!("shader.wgsl").into()),
+        source: wgpu::ShaderSource::Wgsl(include_str!("shaders/shader.wgsl").into()),
     });
 
     // What extra data can the shader access (external buffers, textures, etc)

@@ -87,7 +87,7 @@ impl State {
             a: 1.0,
         };
 
-        let render_pipeline = crate::pipeline::create_render_pipeline(&device, &config);
+        let render_pipeline = crate::graphics::pipeline::create_render_pipeline(&device, &config);
 
         Ok(Self {
             surface,

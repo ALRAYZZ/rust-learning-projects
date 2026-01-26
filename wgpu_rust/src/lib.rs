@@ -1,7 +1,7 @@
 mod app;
 mod state;
 mod input;
-mod pipeline;
+mod graphics;
 
 pub use app::App;
 
