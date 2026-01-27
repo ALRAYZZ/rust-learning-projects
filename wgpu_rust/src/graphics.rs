@@ -3,3 +3,4 @@
 pub mod pipeline;
 pub mod vertex;
 pub mod buffers;
+pub(crate) mod texture;

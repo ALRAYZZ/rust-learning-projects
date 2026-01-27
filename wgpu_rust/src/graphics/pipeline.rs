@@ -3,6 +3,7 @@ use crate::graphics;
 pub fn create_render_pipeline(
     device: &wgpu::Device,
     config: &wgpu::SurfaceConfiguration,
+    texture_bind_group_layout: &wgpu::BindGroupLayout,
 ) -> wgpu::RenderPipeline {
 
     // Takes the shader file and sends it to GPU driver
@@ -15,7 +16,7 @@ pub fn create_render_pipeline(
     let render_pipeline_layout = device.create_pipeline_layout(
         &wgpu::PipelineLayoutDescriptor {
             label: Some("Render Pipeline Layout"),
-            bind_group_layouts: &[],
+            bind_group_layouts: &[&texture_bind_group_layout],
             immediate_size: 0,
         });
 
