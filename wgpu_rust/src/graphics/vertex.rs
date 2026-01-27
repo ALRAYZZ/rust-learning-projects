@@ -14,7 +14,7 @@ pub struct Vertex {
 }
 
 
-pub const VERTICES: &[Vertex] = &[
+pub const PENT_VERTICES: &[Vertex] = &[
     Vertex { position: [-0.0868241, 0.49240386, 0.0], color: [0.5, 0.0, 0.5] }, // A
     Vertex { position: [-0.49513406, 0.06958647, 0.0], color: [0.5, 0.0, 0.5] }, // B
     Vertex { position: [-0.21918549, -0.44939706, 0.0], color: [0.5, 0.0, 0.5] }, // C
@@ -25,10 +25,28 @@ pub const VERTICES: &[Vertex] = &[
 // Indices define how vertices are connected to form triangles
 // Each group of 3 indices represents a triangle
 // So we save memory by reusing vertices for multiple triangles
-pub const INDICES: &[u16] = &[
+pub const PENT_INDICES: &[u16] = &[
     0, 1, 4, // Triangle ABE
     1, 2, 4, // Triangle BCE
     2, 3, 4, // Triangle CDE
+];
+
+pub const COMPLEX_SHAPE_VERTICES: &[Vertex] = &[
+    Vertex { position: [-0.7, -0.8, 0.0], color: [1.0, 0.0, 0.0] },
+    Vertex { position: [0.5, -0.5, 0.0], color: [0.0, 1.0, 0.0] },
+    Vertex { position: [0.5, 0.5, 0.0], color: [0.0, 0.0, 1.0] },
+    Vertex { position: [-0.5, 0.5, 0.0], color: [1.0, 1.0, 0.0] },
+    Vertex { position: [0.0, 0.75, 0.0], color: [1.0, 0.0, 1.0] },
+    Vertex { position: [0.7, 0.8, 0.0], color: [1.0, 1.0, 1.0] },
+    Vertex { position: [0.8, 0.8, 0.0], color: [1.0, 0.0, 1.0] },
+];
+
+pub const COMPLEX_SHAPE_INDICES: &[u16] = &[
+    0, 1, 3, // First triangle (Bottom-left area)
+    1, 2, 3, // Second triangle (Fills the center square)
+    3, 2, 4, // Third triangle (Top-left peak)
+    2, 5, 4, // Fourth triangle (Top-right peak)
+    2, 6, 5, // Fifth triangle (Small tip at the far right)
 ];
 
 // Since we convert all vertex data into a single byte array, we need to specify

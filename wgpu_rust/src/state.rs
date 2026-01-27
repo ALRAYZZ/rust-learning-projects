@@ -21,6 +21,14 @@ pub struct State {
 
     num_vertices: u32,
     num_indices: u32,
+
+    vertex_buffer_2: wgpu::Buffer,
+    index_buffer_2: wgpu::Buffer,
+
+    num_vertices_2: u32,
+    num_indices_2: u32,
+
+    active_shape: usize,
 }
 
 // Defined methods for the Window we create
@@ -96,11 +104,19 @@ impl State {
         };
 
         // Buffers creation
-        let vertex_buffer = graphics::buffers::create_vertex_buffer(&device, graphics::vertex::VERTICES);
-        let index_buffer = graphics::buffers::create_index_buffer(&device, graphics::vertex::INDICES);
+        let vertex_buffer = graphics::buffers::create_vertex_buffer(&device, graphics::vertex::PENT_VERTICES);
+        let index_buffer = graphics::buffers::create_index_buffer(&device, graphics::vertex::PENT_INDICES);
 
-        let num_vertices = graphics::vertex::VERTICES.len() as u32;
-        let num_indices = graphics::vertex::INDICES.len() as u32;
+        let num_vertices = graphics::vertex::PENT_VERTICES.len() as u32;
+        let num_indices = graphics::vertex::PENT_INDICES.len() as u32;
+
+        // 2nd Buffer (different shape)
+        let vertex_buffer_2 = graphics::buffers::create_vertex_buffer(&device, graphics::vertex::COMPLEX_SHAPE_VERTICES);
+        let index_buffer_2 = graphics::buffers::create_index_buffer(&device, graphics::vertex::COMPLEX_SHAPE_INDICES);
+
+        let num_vertices_2 = graphics::vertex::COMPLEX_SHAPE_VERTICES.len() as u32;
+        let num_indices_2 = graphics::vertex::COMPLEX_SHAPE_INDICES.len() as u32;
+
 
         let render_pipeline = graphics::pipeline::create_render_pipeline(&device, &config);
 
@@ -117,6 +133,11 @@ impl State {
             index_buffer,
             num_vertices,
             num_indices,
+            vertex_buffer_2,
+            index_buffer_2,
+            num_vertices_2,
+            num_indices_2,
+            active_shape: 0,
         })
     }
 
@@ -138,6 +159,11 @@ impl State {
 
     pub fn config(&self) -> &wgpu::SurfaceConfiguration {
         &self.config
+    }
+
+    pub fn toggle_shape(&mut self) {
+        // Toggle logic: if 0 and method called, set to 1
+        self.active_shape = if self.active_shape == 0 { 1 } else { 0 };
     }
 
     pub fn window(&self) -> &Arc<Window> {
@@ -194,20 +220,31 @@ impl State {
             // Here we set the pipeline (shaders + fixed function state) and issue draw commands
             render_pass.set_pipeline(&self.render_pipeline);
 
+
+            // Buffer selection based on active shape
+            // If active_shape is 0, use first buffers, else use second buffers
+            let (vertex_buffer, index_buffer, num_indices) = if self.active_shape == 0 {
+                (&self.vertex_buffer, &self.index_buffer, self.num_indices)
+            } else {
+                (&self.vertex_buffer_2, &self.index_buffer_2, self.num_indices_2)
+            };
+
+
+
             // Set the vertex buffer to use
             // Method 1st param, is what buffer slot to use for this vertex buffer
             // We can have multiple vertex buffers bound at once (positions, colors, uvs, etc)
             // Second param, slice of the buffer to use, we can store multiple meshes in one buffer
             // (..) means use full buffer
-            render_pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
+            render_pass.set_vertex_buffer(0, vertex_buffer.slice(..));
 
 
             // Index buffer is a memory optimization to reuse vertices for multiple triangles
             // We create a matrix of indices saying what vertices are shared between triangles
             // This way we dont have to duplicate vertex data in memory
-            render_pass.set_index_buffer(self.index_buffer.slice(..), wgpu::IndexFormat::Uint16);
+            render_pass.set_index_buffer(index_buffer.slice(..), wgpu::IndexFormat::Uint16);
 
-            render_pass.draw_indexed(0..self.num_indices, 0, 0..1);
+            render_pass.draw_indexed(0..num_indices, 0, 0..1);
         } // Scope ends here, so render_pass is dropped and encoder can be used again
 
         // Submit commands to GPU queue for execution

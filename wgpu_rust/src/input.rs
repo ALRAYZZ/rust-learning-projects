@@ -3,13 +3,23 @@ use winit::keyboard::KeyCode;
 
 pub struct InputHandler;
 
+pub enum InputAction {
+    None,
+    Exit,
+    ToggleShape,
+}
+
 impl InputHandler {
 
     // Handle keyboard input events
-    pub fn handle_key(event_loop: &ActiveEventLoop, code: KeyCode, is_pressed: bool) {
+    pub fn handle_key(event_loop: &ActiveEventLoop, code: KeyCode, is_pressed: bool) -> InputAction {
         match (code, is_pressed) {
-            (KeyCode::Escape, true) => event_loop.exit(),
-            _ => {}
+            (KeyCode::Escape, true) => {
+                event_loop.exit();
+                InputAction::Exit
+            }
+            (KeyCode::Space, true) => InputAction::ToggleShape,
+            _ => InputAction::None,
         }
     }
 

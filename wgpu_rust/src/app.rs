@@ -5,7 +5,7 @@ use winit::{
 };
 
 use crate::{state::State, input::InputHandler};
-
+use crate::input::InputAction;
 
 // THE ORCHESTRATOR
 // Manages OS lifecycle. Speaks to winit to create windows, handle events, etc
@@ -86,7 +86,13 @@ impl ApplicationHandler<State> for App {
                     ..
                 },
                 ..
-            } => InputHandler::handle_key(event_loop, code, key_state.is_pressed()),
+            } => {
+                let action = InputHandler::handle_key(event_loop, code, key_state.is_pressed());
+                match action {
+                    InputAction::ToggleShape => state.toggle_shape(),
+                    _ => {}
+                }
+            }
             _ => {}
         }
     }
