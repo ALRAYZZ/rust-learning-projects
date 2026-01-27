@@ -29,6 +29,8 @@ pub struct State {
     num_indices_2: u32,
 
     active_shape: usize,
+
+    diffuse_bind_group: wgpu::BindGroup,
 }
 
 // Defined methods for the Window we create
@@ -168,6 +170,65 @@ impl State {
             ..Default::default()
         });
 
+        // Bind group layout defines the interface/contract: what types of resources (texture, sampler, etc.)
+        // the shader expects at which binding slots. This allows the GPU driver to optimize memory layout
+        // and validate that the actual bind group matches what the shader needs.
+        // IT CONTAINS THE SHAPE OF THE DATA, NOT THE DATA ITSELF
+        let texture_bind_group_layout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                entries: &[
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 0,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Texture {
+                            multisampled: false,
+                            view_dimension: wgpu::TextureViewDimension::D2,
+                            sample_type: wgpu::TextureSampleType::Float { filterable: true},
+                        },
+                        count: None,
+                    },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 1,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        // Should match filterable field of the
+                        // corresponding Texture entry above
+                        ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                        count: None,
+                    },
+                ],
+                label: Some("texture_bind_group_layout"),
+            });
+
+        // The bind group is the actual binding of resources to the layout's slots.
+        // It connects concrete GPU resources (our texture view and sampler) to the binding points
+        // defined in the layout. This separation allows you to swap different resources
+        // (e.g., different textures) without changing the pipeline, as long as they match the layout.
+        // HERE IS THE ACTUAL DATA (EG: TEXTURE FOR BINDING SLOT 0 AND SAMPLER FOR BINDING SLOT 1)
+        let diffuse_bind_group = device.create_bind_group(
+            &wgpu::BindGroupDescriptor {
+                layout: &texture_bind_group_layout,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: wgpu::BindingResource::TextureView(&diffuse_texture_view),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: wgpu::BindingResource::Sampler(&diffuse_sampler),
+                    }
+                ],
+                label: Some("diffuse_bind_group"),
+            }
+        );
+
+
+
+
+
+
+
+
+
         let clear_color = wgpu::Color {
             r: 0.1,
             g: 0.2,
@@ -210,6 +271,7 @@ impl State {
             num_vertices_2,
             num_indices_2,
             active_shape: 0,
+            diffuse_bind_group,
         })
     }
 
@@ -292,6 +354,8 @@ impl State {
             // Here we set the pipeline (shaders + fixed function state) and issue draw commands
             render_pass.set_pipeline(&self.render_pipeline);
 
+            // Set the bind group for the texture
+            render_pass.set_bind_group(0, &self.diffuse_bind_group, &[]);
 
             // Buffer selection based on active shape
             // If active_shape is 0, use first buffers, else use second buffers
