@@ -96,6 +96,78 @@ impl State {
             desired_maximum_frame_latency: 2,
         };
 
+        // TEXTURE LOADING
+        // Load texture image from file and convert to RGBA8 format
+        let diffuse_bytes = include_bytes!("../assets/happy-tree.png");
+        let diffuse_image = image::load_from_memory(diffuse_bytes)?;
+        let diffuse_rgba = diffuse_image.to_rgba8();
+
+        use image::GenericImageView;
+        let dimensions = diffuse_image.dimensions();
+
+        // Create Texture from image data
+        let texture_size = wgpu::Extent3d {
+            width: dimensions.0,
+            height: dimensions.1,
+            // All textures are stored as 3d, setting depth 1 to represent it as 2d
+            depth_or_array_layers: 1,
+        };
+        // Tell GPU to find memory space for texture (ALLOCATION ON GPU)
+        let diffuse_texture = device.create_texture(
+            &wgpu::TextureDescriptor {
+                size: texture_size,
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                // Most images stores using sRGB
+                format: wgpu::TextureFormat::Rgba8UnormSrgb,
+                // Texture binding tells wgpu that we wanna use this texture in shaders
+                // COPY_DST means we will copy data to it
+                usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+                label: Some("Diffuse Texture"),
+                // Specifies what texture formats can be used to create TextureViews for this texture.
+                view_formats: &[],
+            }
+        );
+
+        // Actual command to move diffuse_rgba bytes from RAM to GPU memory over PCIe bus
+        // We use a queue because we cannot send commands directly to GPU, when GPU is ready
+        // it will process commands in the queue
+        queue.write_texture(
+            // Tells wgpu where to copy the pixel data
+            wgpu::TexelCopyTextureInfo{
+                texture: &diffuse_texture,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            // Actual pixel data
+            &diffuse_rgba,
+            // Layout of texture
+            wgpu::TexelCopyBufferLayout{
+                offset: 0,
+                bytes_per_row: Some(4 * dimensions.0),
+                rows_per_image: Some(dimensions.1),
+            },
+            texture_size,
+        );
+
+        // If the Texture is the raw film, the TextureView is the lens focusing on a specific part of that film
+        // and the sampler as the projector settings that defines how it looks on screen
+        // A Texture is a heavy fixed objetc in GPU memory while a TextureView is a lightweight window
+        // into that texture, allowing us to see and use specific parts or aspects of the texture
+        // Sampler stores instructions on how to read texture data (filtering, wrapping, etc)
+        let diffuse_texture_view = diffuse_texture.create_view(&wgpu::TextureViewDescriptor::default());
+        let diffuse_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+            address_mode_u: wgpu::AddressMode::ClampToEdge, // what to do when uv coords are outside 0.0-1.0
+            address_mode_v: wgpu::AddressMode::ClampToEdge,
+            address_mode_w: wgpu::AddressMode::ClampToEdge,
+            mag_filter: wgpu::FilterMode::Linear,
+            min_filter: wgpu::FilterMode::Nearest,
+            mipmap_filter: wgpu::MipmapFilterMode::Nearest,
+            ..Default::default()
+        });
+
         let clear_color = wgpu::Color {
             r: 0.1,
             g: 0.2,
