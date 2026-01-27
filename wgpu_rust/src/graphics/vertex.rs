@@ -10,16 +10,16 @@
 #[derive(Debug, Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct Vertex {
     position: [f32; 3], // Fixed size array for position (x, y, z)
-    color: [f32; 3], // Fixed size array for color (r, g, b)
+    tex_coords: [f32; 2],
 }
 
 
 pub const PENT_VERTICES: &[Vertex] = &[
-    Vertex { position: [-0.0868241, 0.49240386, 0.0], color: [0.5, 0.0, 0.5] }, // A
-    Vertex { position: [-0.49513406, 0.06958647, 0.0], color: [0.5, 0.0, 0.5] }, // B
-    Vertex { position: [-0.21918549, -0.44939706, 0.0], color: [0.5, 0.0, 0.5] }, // C
-    Vertex { position: [0.35966998, -0.3473291, 0.0], color: [0.5, 0.0, 0.5] }, // D
-    Vertex { position: [0.44147372, 0.2347359, 0.0], color: [0.5, 0.0, 0.5] }, // E
+    Vertex { position: [-0.0868241, 0.49240386, 0.0], tex_coords: [0.4131759, 0.99240386], }, // A
+    Vertex { position: [-0.49513406, 0.06958647, 0.0], tex_coords: [0.0048659444, 0.56958647], }, // B
+    Vertex { position: [-0.21918549, -0.44939706, 0.0], tex_coords: [0.28081453, 0.05060294], }, // C
+    Vertex { position: [0.35966998, -0.3473291, 0.0], tex_coords: [0.85967, 0.1526709], }, // D
+    Vertex { position: [0.44147372, 0.2347359, 0.0], tex_coords: [0.9414737, 0.7347359], }, // E
 ];
 
 // Indices define how vertices are connected to form triangles
@@ -32,13 +32,13 @@ pub const PENT_INDICES: &[u16] = &[
 ];
 
 pub const COMPLEX_SHAPE_VERTICES: &[Vertex] = &[
-    Vertex { position: [-0.7, -0.8, 0.0], color: [1.0, 0.0, 0.0] },
-    Vertex { position: [0.5, -0.5, 0.0], color: [0.0, 1.0, 0.0] },
-    Vertex { position: [0.5, 0.5, 0.0], color: [0.0, 0.0, 1.0] },
-    Vertex { position: [-0.5, 0.5, 0.0], color: [1.0, 1.0, 0.0] },
-    Vertex { position: [0.0, 0.75, 0.0], color: [1.0, 0.0, 1.0] },
-    Vertex { position: [0.7, 0.8, 0.0], color: [1.0, 1.0, 1.0] },
-    Vertex { position: [0.8, 0.8, 0.0], color: [1.0, 0.0, 1.0] },
+    Vertex { position: [-0.5, -0.5, 0.0], tex_coords: [0.0, 0.0], }, // Bottom-left
+    Vertex { position: [0.0, -0.5, 0.0], tex_coords: [0.5, 0.0], },  // Bottom-center
+    Vertex { position: [0.5, -0.5, 0.0], tex_coords: [1.0, 0.0], },  // Bottom-right
+    Vertex { position: [-0.5, 0.0, 0.0], tex_coords: [0.0, 0.5], },  // Middle-left
+    Vertex { position: [0.0, 0.5, 0.0], tex_coords: [0.5, 1.0], },   // Top-center peak
+    Vertex { position: [0.5, 0.0, 0.0], tex_coords: [1.0, 0.5], },   // Middle-right
+    Vertex { position: [0.75, -0.25, 0.0], tex_coords: [1.25, 0.25], }, // Small tip at far right
 ];
 
 pub const COMPLEX_SHAPE_INDICES: &[u16] = &[
@@ -75,7 +75,7 @@ impl Vertex {
                 wgpu::VertexAttribute {
                     offset: size_of::<[f32; 3]>() as wgpu::BufferAddress, // Offset based on size of position
                     shader_location: 1,
-                    format: wgpu::VertexFormat::Float32x3, // 3 floats for color
+                    format: wgpu::VertexFormat::Float32x2, // 2 floats for tex_coords
                 },
             ]
         }

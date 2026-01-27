@@ -3,7 +3,7 @@
 
 struct VertexInput {
     @location(0) position: vec3<f32>, // Input attribute for vertex position
-    @location(1) color: vec3<f32>,    // Input attribute for vertex color
+    @location(1) tex_coords: vec2<f32>,  // Input attribute for texture coordinates
 }
 
 struct VertexOutput {
@@ -11,7 +11,7 @@ struct VertexOutput {
     // builtin position is in framebuffer coordinates, meaning (0,0) is bottom-left
     // while clip space is normalized device coordinates where (-1,-1) is bottom-left
     @builtin(position) clip_position: vec4<f32>, // Tells GPU about clip space position of vertex
-    @location(0) color: vec3<f32>, // Pass color to fragment shader
+    @location(0) tex_coords: vec2<f32>, // Pass texture coordinates to fragment shader
 };
 
 @vertex // Signals its an entry point for the vertex shader
@@ -21,13 +21,18 @@ fn vs_main(
     // Variables with var can be modified but must specify a type
     // Variables with let can have their types inferred, but value cant change during shader
     var out: VertexOutput; // Variable to hold our output data based on the struct
-    out.color = model.color;
+    out.tex_coords = model.tex_coords;
     out.clip_position = vec4<f32>(model.position, 1.0);
     return out;
 }
 
 // Fragment shader
+@group(0) @binding(0)
+var t_diffuse: texture_2d<f32>; // 2D texture bound to group 0 binding 0
+@group(0) @binding(1)
+var s_diffuse: sampler; // Sampler bound to group 0 binding 1
+
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
-    return vec4<f32>(in.color, 1.0); // Set color to current fragment
+    return textureSample(t_diffuse, s_diffuse, in.tex_coords);
 }
