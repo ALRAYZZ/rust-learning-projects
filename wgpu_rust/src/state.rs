@@ -17,13 +17,16 @@ pub struct State {
     render_pipeline: wgpu::RenderPipeline,
 
     vertex_buffer: wgpu::Buffer,
+    index_buffer: wgpu::Buffer,
 
     num_vertices: u32,
+    num_indices: u32,
 }
 
 // Defined methods for the Window we create
 impl State {
     // Handshake with GPU to see what it supports and create device/queue
+    // Constructor to initialize State
     pub async fn new(window: Arc<Window>) -> anyhow::Result<State> {
         let size = window.inner_size();
 
@@ -92,8 +95,13 @@ impl State {
             a: 1.0,
         };
 
+        // Buffers creation
         let vertex_buffer = graphics::buffers::create_vertex_buffer(&device, graphics::vertex::VERTICES);
+        let index_buffer = graphics::buffers::create_index_buffer(&device, graphics::vertex::INDICES);
+
         let num_vertices = graphics::vertex::VERTICES.len() as u32;
+        let num_indices = graphics::vertex::INDICES.len() as u32;
+
         let render_pipeline = graphics::pipeline::create_render_pipeline(&device, &config);
 
         Ok(Self {
@@ -106,7 +114,9 @@ impl State {
             clear_color,
             render_pipeline,
             vertex_buffer,
+            index_buffer,
             num_vertices,
+            num_indices,
         })
     }
 
@@ -190,7 +200,14 @@ impl State {
             // Second param, slice of the buffer to use, we can store multiple meshes in one buffer
             // (..) means use full buffer
             render_pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
-            render_pass.draw(0..self.num_vertices, 0..1);
+
+
+            // Index buffer is a memory optimization to reuse vertices for multiple triangles
+            // We create a matrix of indices saying what vertices are shared between triangles
+            // This way we dont have to duplicate vertex data in memory
+            render_pass.set_index_buffer(self.index_buffer.slice(..), wgpu::IndexFormat::Uint16);
+
+            render_pass.draw_indexed(0..self.num_indices, 0, 0..1);
         } // Scope ends here, so render_pass is dropped and encoder can be used again
 
         // Submit commands to GPU queue for execution
