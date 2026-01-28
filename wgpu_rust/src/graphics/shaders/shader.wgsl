@@ -1,6 +1,12 @@
 // Vertex shader (positioning)
 // Logic performed for each vertex
 
+struct CameraUniform {
+    view_proj: mat4x4<f32>, // View-projection matrix for transforming vertices
+}
+@group(1) @binding(0)
+var<uniform> camera: CameraUniform; // Uniform buffer for camera data
+
 // Data comes from vertex buffer
 struct VertexInput {
     // Location means the layout location of the attribute in the vertex buffer
@@ -21,11 +27,9 @@ struct VertexOutput {
 fn vs_main(
     model: VertexInput
 ) -> VertexOutput {
-    // Variables with var can be modified but must specify a type
-    // Variables with let can have their types inferred, but value cant change during shader
     var out: VertexOutput; // Variable to hold our output data based on the struct
     out.tex_coords = model.tex_coords;
-    out.clip_position = vec4<f32>(model.position, 1.0); // 1.0 for w to keep position unchanged talks about perspective divide
+    out.clip_position = camera.view_proj * vec4<f32>(model.position, 1.0); // Transform vertex position to clip space
     return out;
 }
 
