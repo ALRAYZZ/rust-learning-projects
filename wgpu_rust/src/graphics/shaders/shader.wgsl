@@ -1,11 +1,14 @@
-// Vertex shader
+// Vertex shader (positioning)
 // Logic performed for each vertex
 
+// Data comes from vertex buffer
 struct VertexInput {
+    // Location means the layout location of the attribute in the vertex buffer
     @location(0) position: vec3<f32>, // Input attribute for vertex position
     @location(1) tex_coords: vec2<f32>,  // Input attribute for texture coordinates
 }
 
+// Data into rasterizer and fragment shader
 struct VertexOutput {
     // Vertex position in clip space(meaning inside our viewport)
     // builtin position is in framebuffer coordinates, meaning (0,0) is bottom-left
@@ -22,11 +25,11 @@ fn vs_main(
     // Variables with let can have their types inferred, but value cant change during shader
     var out: VertexOutput; // Variable to hold our output data based on the struct
     out.tex_coords = model.tex_coords;
-    out.clip_position = vec4<f32>(model.position, 1.0);
+    out.clip_position = vec4<f32>(model.position, 1.0); // 1.0 for w to keep position unchanged talks about perspective divide
     return out;
 }
 
-// Fragment shader
+// Fragment shader (coloring) fragment shaders runs per pixel
 @group(0) @binding(0)
 var t_diffuse: texture_2d<f32>; // 2D texture bound to group 0 binding 0
 @group(0) @binding(1)
