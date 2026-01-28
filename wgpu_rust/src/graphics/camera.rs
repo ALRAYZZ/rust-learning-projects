@@ -1,0 +1,65 @@
+// Conversion matrix from OpenGL to WGPU coordinate system
+// OpenGL (cgmath) Z axis ranges from -1 to 1
+// WGPU (DirectX/Vulkan/Metal) Z axis ranges from 0 to 1
+// This matrix scales Z by 0.5 and translates it by 0.
+#[rustfmt::skip]
+pub const OPENGL_TO_WGPU_MATRIX: cgmath::Matrix4<f32> = cgmath::Matrix4::from_cols(
+    cgmath::Vector4::new(1.0, 0.0, 0.0, 0.0),
+    cgmath::Vector4::new(0.0, 1.0, 0.0, 0.0),
+    cgmath::Vector4::new(0.0, 0.0, 0.5, 0.0),
+    cgmath::Vector4::new(0.0, 0.0, 0.5, 1.0),
+);
+
+pub struct Camera {
+    eye: cgmath::Point3<f32>,
+    target: cgmath::Point3<f32>,
+    up: cgmath::Vector3<f32>,
+    aspect: f32,
+    fovy: f32,
+    znear: f32,
+    zfar: f32,
+}
+
+pub struct CameraConfig {
+    pub eye: cgmath::Point3<f32>,
+    pub target: cgmath::Point3<f32>,
+    pub up: cgmath::Vector3<f32>,
+    pub aspect: f32,
+    pub fovy: f32,
+    pub znear: f32,
+    pub zfar: f32,
+}
+
+impl Camera {
+    pub fn new(config: CameraConfig) -> Self {
+        Self {
+            eye: config.eye,
+            target: config.target,
+            up: config.up,
+            aspect: config.aspect,
+            fovy: config.fovy,
+            znear: config.znear,
+            zfar: config.zfar,
+        }
+    }
+
+    // Setters/getters
+    // ..
+
+    fn build_view_projection_matrix(&self) -> cgmath::Matrix4<f32> {
+
+        // GPUs dont actually move the camera, instead we move and rotate the entire scene inversely to simulate camera movement
+        // the view matrix offsets every vertex so that they are relative to the camera position and orientation
+        let view = cgmath::Matrix4::look_at_rh(self.eye, self.target, self.up);
+
+        // The projection matrix defines how 3D points are projected onto the 2D screen
+        // making farther objects appear smaller to create depth perception X and Y divided by Z
+        let proj = cgmath::perspective(
+            cgmath::Deg(self.fovy),
+            self.aspect,
+            self.znear,
+            self.zfar,
+        );
+        return OPENGL_TO_WGPU_MATRIX * proj * view;
+    }
+}

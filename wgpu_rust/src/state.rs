@@ -1,7 +1,7 @@
 use std::sync::Arc;
 use wgpu::naga::proc::index::oob_local_types;
 use winit::window::Window;
-use crate::graphics;
+use crate::graphics::{vertex, pipeline, texture, camera, buffers};
 
 // THE ENGINE
 // GPU context. Live inside APP, holds device, queue, surface, config, translates logic into
@@ -32,12 +32,15 @@ pub struct State {
     active_shape: usize,
 
     diffuse_bind_group: wgpu::BindGroup,
-    diffuse_texture: graphics::texture::Texture,
+    diffuse_texture: texture::Texture,
+
+    camera: camera::Camera,
 }
 
 // Defined methods for the Window we create
 impl State {
     // Handshake with GPU to see what it supports and create device/queue
+    // Make method async because some adapters/devices may take time to initialize
     // Constructor to initialize State
     pub async fn new(window: Arc<Window>) -> anyhow::Result<State> {
         let size = window.inner_size();
@@ -105,13 +108,13 @@ impl State {
 
         // Create bind group layout
         let texture_bind_group_layout =
-            graphics::texture::create_texture_bind_group_layout(&device);
+            texture::create_texture_bind_group_layout(&device);
 
         // Helper method to transform image bytes into Texture object in GPU memory
         // Textures are not only image data, but is a combination of:
         // The raw pixel data in VRAM - the usage of that data (sampling in shaders)
         // and the instructions on how to look at that data ("lens" and "projector settings")
-        let diffuse_texture = graphics::texture::Texture::from_bytes(
+        let diffuse_texture = texture::Texture::from_bytes(
             &device,
             &queue,
             diffuse_bytes,
@@ -120,11 +123,26 @@ impl State {
 
         // Create bind group from texture
         let diffuse_bind_group =
-            graphics::texture::create_bind_group_from_texture(
+            texture::create_bind_group_from_texture(
                 &device,
                 &texture_bind_group_layout,
                 &diffuse_texture,
             );
+
+
+        let camera = camera::Camera::new(camera::CameraConfig {
+            // Eye is camera position in world space
+            eye: (0.0, 1.0, 2.0).into(),
+            // Where the camera is looking at
+            target: (0.0, 0.0, 0.0).into(),
+            // Which direction is up for the camera
+            up: cgmath::Vector3::unit_y(),
+            aspect: config.width as f32 / config.height as f32,
+            fovy: 45.0,
+            znear: 0.1,
+            zfar: 100.0,
+        });
+
 
         let clear_color = wgpu::Color {
             r: 0.1,
@@ -134,21 +152,21 @@ impl State {
         };
 
         // Buffers creation
-        let vertex_buffer = graphics::buffers::create_vertex_buffer(&device, graphics::vertex::PENT_VERTICES);
-        let index_buffer = graphics::buffers::create_index_buffer(&device, graphics::vertex::PENT_INDICES);
+        let vertex_buffer = buffers::create_vertex_buffer(&device, vertex::PENT_VERTICES);
+        let index_buffer = buffers::create_index_buffer(&device, vertex::PENT_INDICES);
 
-        let num_vertices = graphics::vertex::PENT_VERTICES.len() as u32;
-        let num_indices = graphics::vertex::PENT_INDICES.len() as u32;
+        let num_vertices = vertex::PENT_VERTICES.len() as u32;
+        let num_indices = vertex::PENT_INDICES.len() as u32;
 
         // 2nd Buffer (different shape)
-        let vertex_buffer_2 = graphics::buffers::create_vertex_buffer(&device, graphics::vertex::COMPLEX_SHAPE_VERTICES);
-        let index_buffer_2 = graphics::buffers::create_index_buffer(&device, graphics::vertex::COMPLEX_SHAPE_INDICES);
+        let vertex_buffer_2 = buffers::create_vertex_buffer(&device, vertex::COMPLEX_SHAPE_VERTICES);
+        let index_buffer_2 = buffers::create_index_buffer(&device, vertex::COMPLEX_SHAPE_INDICES);
 
-        let num_vertices_2 = graphics::vertex::COMPLEX_SHAPE_VERTICES.len() as u32;
-        let num_indices_2 = graphics::vertex::COMPLEX_SHAPE_INDICES.len() as u32;
+        let num_vertices_2 = vertex::COMPLEX_SHAPE_VERTICES.len() as u32;
+        let num_indices_2 = vertex::COMPLEX_SHAPE_INDICES.len() as u32;
 
 
-        let render_pipeline = graphics::pipeline::create_render_pipeline(&device, &config, &texture_bind_group_layout);
+        let render_pipeline = pipeline::create_render_pipeline(&device, &config, &texture_bind_group_layout);
 
         Ok(Self {
             surface,
@@ -170,6 +188,7 @@ impl State {
             active_shape: 0,
             diffuse_bind_group,
             diffuse_texture,
+            camera,
         })
     }
 
