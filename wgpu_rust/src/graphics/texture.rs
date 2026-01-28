@@ -121,7 +121,7 @@ pub fn create_texture_bind_group_layout(device: &wgpu::Device) -> wgpu::BindGrou
                 count: None,
             },
         ],
-        label: Some("texture_bind_group_layout"),
+        label: Some("Texture Bind Group Layout"),
     })
 }
 
@@ -142,7 +142,7 @@ pub fn create_bind_group_from_texture(
                 resource: wgpu::BindingResource::Sampler(&texture.sampler),
             }
         ],
-        label: Some("texture_bind_group"),
+        label: Some("Texture Bind Group"),
     })
 }
 

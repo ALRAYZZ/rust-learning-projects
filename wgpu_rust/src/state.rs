@@ -2,6 +2,7 @@ use std::sync::Arc;
 use wgpu::naga::proc::index::oob_local_types;
 use winit::window::Window;
 use crate::graphics::{vertex, pipeline, texture, camera, buffers};
+use crate::graphics::camera::CameraUniform;
 
 // THE ENGINE
 // GPU context. Live inside APP, holds device, queue, surface, config, translates logic into
@@ -35,6 +36,9 @@ pub struct State {
     diffuse_texture: texture::Texture,
 
     camera: camera::Camera,
+    camera_uniform: CameraUniform,
+    camera_buffer: wgpu::Buffer,
+    camera_bind_group: wgpu::BindGroup,
 }
 
 // Defined methods for the Window we create
@@ -150,6 +154,23 @@ impl State {
         // Create uniform buffer(GPU) for camera (The container)
         let camera_buffer = buffers::create_uniform_buffer(&device, &camera_uniform);
 
+        // Create bind group layout for camera uniform
+        let camera_bind_group_layout =
+            camera::CameraUniform::create_bind_group_layout(&device);
+
+        // Create bind group for camera uniform (The connection)
+        // We use a bind group for each resource (texture, uniform buffer, etc)
+        // Bind groups are like tray of objects, it avoids the GPU having to go and ask
+        // for individual resources one by one limiting performance
+        // When we set the uniform buffer, we set the entire bind group at once
+        // and GPU can focus on rendering instead of fetching resources and doing checks
+        let camera_bind_group =
+            camera::CameraUniform::create_bind_group(
+                &device,
+                &camera_bind_group_layout,
+                &camera_buffer,
+            );
+
         let clear_color = wgpu::Color {
             r: 0.1,
             g: 0.2,
@@ -172,7 +193,17 @@ impl State {
         let num_indices_2 = vertex::COMPLEX_SHAPE_INDICES.len() as u32;
 
 
-        let render_pipeline = pipeline::create_render_pipeline(&device, &config, &texture_bind_group_layout);
+        // Creating the render pipeline is one of the most expensive tasks GPU does,
+        // GPU driver compiles shaders and optimizes the pipeline for the specific GPU
+        // To do the optimization, GPU needs to know the SHAPE of the data, but it doesnt care
+        // about the actual data. This allows to build the pipeline once, and swap out data buffers
+        let render_pipeline =
+            pipeline::create_render_pipeline(
+                &device,
+                &config,
+                &texture_bind_group_layout,
+                &camera_bind_group_layout,
+            );
 
         Ok(Self {
             surface,
@@ -195,6 +226,9 @@ impl State {
             diffuse_bind_group,
             diffuse_texture,
             camera,
+            camera_uniform,
+            camera_buffer,
+            camera_bind_group,
         })
     }
 
@@ -279,6 +313,8 @@ impl State {
 
             // Set the bind group for the texture
             render_pass.set_bind_group(0, &self.diffuse_bind_group, &[]);
+            // Set the bind group for the camera uniform
+            render_pass.set_bind_group(1, &self.camera_bind_group, &[]);
 
             // Buffer selection based on active shape
             // If active_shape is 0, use first buffers, else use second buffers
