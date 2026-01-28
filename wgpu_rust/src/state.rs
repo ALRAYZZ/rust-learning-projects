@@ -129,7 +129,7 @@ impl State {
                 &diffuse_texture,
             );
 
-
+        // Create camera with config
         let camera = camera::Camera::new(camera::CameraConfig {
             // Eye is camera position in world space
             eye: (0.0, 1.0, 2.0).into(),
@@ -143,6 +143,12 @@ impl State {
             zfar: 100.0,
         });
 
+        // Create camera uniform and update with camera data (The data)
+        let mut camera_uniform = camera::CameraUniform::new();
+        camera_uniform.update_view_proj(&camera);
+
+        // Create uniform buffer(GPU) for camera (The container)
+        let camera_buffer = buffers::create_uniform_buffer(&device, &camera_uniform);
 
         let clear_color = wgpu::Color {
             r: 0.1,
