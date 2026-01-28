@@ -1,4 +1,5 @@
 use std::sync::Arc;
+use wgpu::naga::proc::index::oob_local_types;
 use winit::window::Window;
 use crate::graphics;
 
@@ -31,6 +32,7 @@ pub struct State {
     active_shape: usize,
 
     diffuse_bind_group: wgpu::BindGroup,
+    diffuse_texture: graphics::texture::Texture,
 }
 
 // Defined methods for the Window we create
@@ -98,18 +100,31 @@ impl State {
             desired_maximum_frame_latency: 2,
         };
 
-        // Load texture bytes
+        // Load image into RAM
         let diffuse_bytes = include_bytes!("../assets/happy-tree.png");
 
+        // Create bind group layout
         let texture_bind_group_layout =
             graphics::texture::create_texture_bind_group_layout(&device);
+
+        // Helper method to transform image bytes into Texture object in GPU memory
+        // Textures are not only image data, but is a combination of:
+        // The raw pixel data in VRAM - the usage of that data (sampling in shaders)
+        // and the instructions on how to look at that data ("lens" and "projector settings")
+        let diffuse_texture = graphics::texture::Texture::from_bytes(
+            &device,
+            &queue,
+            diffuse_bytes,
+            "happy-tree.png",
+        )?;
+
+        // Create bind group from texture
         let diffuse_bind_group =
-            graphics::texture::load_texture_from_bytes(
+            graphics::texture::create_bind_group_from_texture(
                 &device,
-                &queue,
                 &texture_bind_group_layout,
-                diffuse_bytes,
-            )?;
+                &diffuse_texture,
+            );
 
         let clear_color = wgpu::Color {
             r: 0.1,
@@ -154,6 +169,7 @@ impl State {
             num_indices_2,
             active_shape: 0,
             diffuse_bind_group,
+            diffuse_texture,
         })
     }
 
