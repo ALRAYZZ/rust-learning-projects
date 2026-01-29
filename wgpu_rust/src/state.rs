@@ -1,8 +1,8 @@
 use std::sync::Arc;
-use wgpu::naga::proc::index::oob_local_types;
 use winit::window::Window;
 use crate::graphics::{vertex, pipeline, texture, camera, buffers};
 use crate::graphics::camera::CameraUniform;
+use crate::graphics::camera_controller::CameraController;
 
 // THE ENGINE
 // GPU context. Live inside APP, holds device, queue, surface, config, translates logic into
@@ -39,6 +39,7 @@ pub struct State {
     camera_uniform: CameraUniform,
     camera_buffer: wgpu::Buffer,
     camera_bind_group: wgpu::BindGroup,
+    pub(crate) camera_controller: CameraController,
 }
 
 // Defined methods for the Window we create
@@ -171,6 +172,9 @@ impl State {
                 &camera_buffer,
             );
 
+        // Create controls for the camera with a given speed
+        let camera_controller = CameraController::new(0.2);
+
         let clear_color = wgpu::Color {
             r: 0.1,
             g: 0.2,
@@ -229,6 +233,7 @@ impl State {
             camera_uniform,
             camera_buffer,
             camera_bind_group,
+            camera_controller,
         })
     }
 
@@ -262,7 +267,9 @@ impl State {
     }
 
     pub fn update(&mut self) {
-        // TODO
+        self.camera_controller.update_camera(&mut self.camera);
+        self.camera_uniform.update_view_proj(&self.camera);
+        self.queue.write_buffer(&self.camera_buffer, 0, bytemuck::cast_slice(&[self.camera_uniform]));
     }
 
     pub fn render(&mut self) -> Result<(), wgpu::SurfaceError> {

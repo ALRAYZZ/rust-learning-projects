@@ -87,11 +87,17 @@ impl ApplicationHandler<State> for App {
                 },
                 ..
             } => {
+                let is_pressed = key_state.is_pressed();
+                // Handle application-level input
                 let action = InputHandler::handle_key(event_loop, code, key_state.is_pressed());
                 match action {
                     InputAction::ToggleShape => state.toggle_shape(),
+                    InputAction::Exit => event_loop.exit(),
                     _ => {}
                 }
+                
+                // Handle camera movement input
+                state.camera_controller.handle_key(code, is_pressed);
             }
             _ => {}
         }

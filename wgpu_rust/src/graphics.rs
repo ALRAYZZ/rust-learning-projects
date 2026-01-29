@@ -5,3 +5,4 @@ pub mod vertex;
 pub mod buffers;
 pub(crate) mod texture;
 pub mod camera;
+pub mod camera_controller;
