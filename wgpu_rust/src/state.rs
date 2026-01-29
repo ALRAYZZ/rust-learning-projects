@@ -173,7 +173,7 @@ impl State {
             );
 
         // Create controls for the camera with a given speed
-        let camera_controller = CameraController::new(0.2);
+        let camera_controller = CameraController::new(0.1);
 
         let clear_color = wgpu::Color {
             r: 0.1,
@@ -195,7 +195,6 @@ impl State {
 
         let num_vertices_2 = vertex::COMPLEX_SHAPE_VERTICES.len() as u32;
         let num_indices_2 = vertex::COMPLEX_SHAPE_INDICES.len() as u32;
-
 
         // Creating the render pipeline is one of the most expensive tasks GPU does,
         // GPU driver compiles shaders and optimizes the pipeline for the specific GPU
