@@ -1,7 +1,9 @@
 use std::sync::Arc;
+use cgmath::{InnerSpace, Rotation3, Zero};
 use winit::window::Window;
 use crate::graphics::{vertex, pipeline, texture, camera, buffers};
 use crate::graphics::camera::CameraUniform;
+use crate::graphics::instance::Instance;
 use crate::graphics::camera_controller::CameraController;
 
 // THE ENGINE
@@ -39,8 +41,15 @@ pub struct State {
     camera_uniform: CameraUniform,
     camera_buffer: wgpu::Buffer,
     camera_bind_group: wgpu::BindGroup,
-    pub(crate) camera_controller: CameraController,
+    camera_controller: CameraController,
+
+    instances: Vec<Instance>,
+    instance_buffer: wgpu::Buffer,
 }
+
+const NUM_INSTANCES_PER_ROW: u32 = 10;
+const INSTANCE_DISPLACEMENT: cgmath::Vector3<f32> = cgmath::Vector3::new(
+    NUM_INSTANCES_PER_ROW as f32 * 0.5, 0.0, NUM_INSTANCES_PER_ROW as f32 * 0.5,);
 
 // Defined methods for the Window we create
 impl State {
@@ -175,6 +184,34 @@ impl State {
         // Create controls for the camera with a given speed
         let camera_controller = CameraController::new(0.1);
 
+        // Generate a list of positions and rotations for instances based on a grid
+        // mapping over X and Z axis to create rows and columns
+        let instances = (0..NUM_INSTANCES_PER_ROW).flat_map(|z| {
+            (0..NUM_INSTANCES_PER_ROW).map(move |x| {
+                let position =
+                    cgmath::Vector3 {x: x as f32, y: 0.0, z: z as f32} - INSTANCE_DISPLACEMENT;
+
+                let rotation = if position.is_zero() {
+                    // Needed so object at (0,0,0) wont get scaled to zero
+                    // Quaternions can affect scale if not created correctly
+                    cgmath::Quaternion::from_axis_angle(cgmath::Vector3::unit_z(), cgmath::Deg(0.0))
+                } else {
+                    cgmath::Quaternion::from_axis_angle(position.normalize(), cgmath::Deg(45.0))
+                };
+
+                Instance {
+                    position, rotation,
+                }
+            })
+        }).collect::<Vec<_>>();
+
+        // Convert instances to raw data for GPU
+        let instance_data = instances.iter().map(Instance::to_raw).collect::<Vec<_>>();
+        // Create instance buffer in GPU memory
+        let instance_buffer = buffers::create_instance_buffer(&device, instance_data);
+
+
+
         let clear_color = wgpu::Color {
             r: 0.1,
             g: 0.2,
@@ -233,6 +270,8 @@ impl State {
             camera_buffer,
             camera_bind_group,
             camera_controller,
+            instances,
+            instance_buffer,
         })
     }
 
@@ -339,13 +378,20 @@ impl State {
             // (..) means use full buffer
             render_pass.set_vertex_buffer(0, vertex_buffer.slice(..));
 
+            // Set the instance buffer (2nd vertex buffer slot)
+            render_pass.set_vertex_buffer(1, self.instance_buffer.slice(..));
+
 
             // Index buffer is a memory optimization to reuse vertices for multiple triangles
             // We create a matrix of indices saying what vertices are shared between triangles
             // This way we dont have to duplicate vertex data in memory
             render_pass.set_index_buffer(index_buffer.slice(..), wgpu::IndexFormat::Uint16);
 
-            render_pass.draw_indexed(0..num_indices, 0, 0..1);
+            // Draw call
+            // 1st param: Range of indices to use from index buffer
+            // 2nd param: Base vertex, added to each index from index buffer (useful for sub-meshes)
+            // 3rd param: Range of instances to draw (for instanced rendering)
+            render_pass.draw_indexed(0..num_indices, 0, 0..self.instances.len() as _);
         } // Scope ends here, so render_pass is dropped and encoder can be used again
 
         // Submit commands to GPU queue for execution

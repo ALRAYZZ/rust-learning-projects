@@ -1,4 +1,6 @@
 use crate::graphics;
+use crate::graphics::instance::InstanceRaw;
+use crate::graphics::vertex::Vertex;
 
 pub fn create_render_pipeline(
     device: &wgpu::Device,
@@ -35,7 +37,7 @@ pub fn create_render_pipeline(
         vertex: wgpu::VertexState {
             module: &shader,
             entry_point: Some("vs_main"), // Shader function to use as entry point
-            buffers: &[graphics::vertex::Vertex::desc()], // Describe the layout of vertex buffer
+            buffers: &[Vertex::desc(), InstanceRaw::desc()], // Buffers layouts
             compilation_options: wgpu::PipelineCompilationOptions::default(),
         },
         // 2nd Programmable step, determines the color of every pixel inside the triangles.

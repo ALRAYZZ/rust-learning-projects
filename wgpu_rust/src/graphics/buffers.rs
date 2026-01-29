@@ -1,5 +1,6 @@
 use wgpu::util::DeviceExt;
 use crate::graphics::camera::CameraUniform;
+use crate::graphics::instance::InstanceRaw;
 
 // Vertex buffer holds vertex data (positions, colors, texture coords, etc)
 pub fn create_vertex_buffer(device: &wgpu::Device, vertices: &[crate::graphics::vertex::Vertex])
@@ -32,6 +33,16 @@ pub fn create_uniform_buffer(device: &wgpu::Device, camera_uniform: &CameraUnifo
             label: Some("Camera Uniform Buffer"),
             contents: bytemuck::cast_slice(&[*camera_uniform]),
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        }
+    )
+}
+
+pub fn create_instance_buffer(device: &wgpu::Device, instance_data: Vec<InstanceRaw>) -> wgpu::Buffer {
+    device.create_buffer_init(
+        &wgpu::util::BufferInitDescriptor {
+            label: Some("Instance Buffer"),
+            contents: bytemuck::cast_slice(&instance_data),
+            usage: wgpu::BufferUsages::VERTEX,
         }
     )
 }
