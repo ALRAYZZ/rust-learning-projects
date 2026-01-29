@@ -41,7 +41,7 @@ pub struct State {
     camera_uniform: CameraUniform,
     camera_buffer: wgpu::Buffer,
     camera_bind_group: wgpu::BindGroup,
-    camera_controller: CameraController,
+    pub(crate) camera_controller: CameraController,
 
     instances: Vec<Instance>,
     instance_buffer: wgpu::Buffer,
