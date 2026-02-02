@@ -8,7 +8,20 @@ struct InstanceInput {
     @location(8) model_matrix_3: vec4<f32>,
 }
 
+struct RenderModeUniform {
+    mode: u32,
+    padding0: u32,
+    padding1: u32,
+    padding2: u32,
+};
 
+@group(3) @binding(0)
+var<uniform> render_mode: RenderModeUniform;
+
+@group(2) @binding(0)
+var depth_tex: texture_depth_2d;
+@group(2) @binding(1)
+var depth_sampler: sampler;
 
 // Vertex shader (positioning)
 // Logic performed for each vertex
@@ -33,6 +46,7 @@ struct VertexOutput {
     // while clip space is normalized device coordinates where (-1,-1) is bottom-left
     @builtin(position) clip_position: vec4<f32>, // Tells GPU about clip space position of vertex
     @location(0) tex_coords: vec2<f32>, // Pass texture coordinates to fragment shader
+    @location(1) screen_uv: vec2<f32>, // Pass screen uv to fragment shader
 };
 
 @vertex // Signals its an entry point for the vertex shader
@@ -48,9 +62,16 @@ fn vs_main(
         instance.model_matrix_3,
     );
     var out: VertexOutput;
-    out.tex_coords = model.tex_coords;
+
     // Actual transformation from model space to clip space (single poing from 3D file space to 2D screen space)
-    out.clip_position = camera.view_proj * model_matrix * vec4<f32>(model.position, 1.0);
+    let clip = camera.view_proj * model_matrix * vec4<f32>(model.position, 1.0);
+
+    out.clip_position = clip;
+    out.tex_coords = model.tex_coords;
+
+    // Convert clip space to screen uv
+    let ndc: vec2<f32> = clip.xy / clip.w; // Normalize to NDC space
+    out.screen_uv = ndc * 0.5 + vec2<f32>(0.5, 0.5); // Convert NDC to UV space [0,1]
     return out;
 }
 
@@ -62,5 +83,13 @@ var s_diffuse: sampler; // Sampler bound to group 0 binding 1
 
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
+    if (render_mode.mode == 1u) {
+        // depth visualization
+        let d = textureSample(depth_tex, depth_sampler, in.screen_uv);
+        let vis = pow(d, 0.1);
+        return vec4<f32>(vis, vis, vis, 1.0);
+    }
+
+    // normal textured rendering
     return textureSample(t_diffuse, s_diffuse, in.tex_coords);
 }

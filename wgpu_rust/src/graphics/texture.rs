@@ -122,6 +122,7 @@ impl Texture {
         let texture = device.create_texture(&desc);
 
         let texture_view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+        // For visualization we want a non-comparison sampler
         let sampler = device.create_sampler(
             &wgpu::SamplerDescriptor {
                 address_mode_u: wgpu::AddressMode::ClampToEdge,
@@ -130,7 +131,7 @@ impl Texture {
                 mag_filter: wgpu::FilterMode::Linear,
                 min_filter: wgpu::FilterMode::Linear,
                 mipmap_filter: wgpu::MipmapFilterMode::Nearest,
-                compare: Some(wgpu::CompareFunction::LessEqual),
+                compare: None,
                 lod_min_clamp: 0.0,
                 lod_max_clamp: 100.0,
                 ..Default::default()
@@ -193,7 +194,7 @@ pub fn create_depth_bind_group_layout(device: &wgpu::Device) -> wgpu::BindGroupL
             wgpu::BindGroupLayoutEntry {
                 binding: 1,
                 visibility: wgpu::ShaderStages::FRAGMENT,
-                ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Comparison), // Comparison sampler for depth
+                ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
                 count: None,
             },
         ],

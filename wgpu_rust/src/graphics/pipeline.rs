@@ -8,6 +8,8 @@ pub fn create_render_pipeline(
     config: &wgpu::SurfaceConfiguration,
     texture_bind_group_layout: &wgpu::BindGroupLayout,
     camera_bind_group_layout: &wgpu::BindGroupLayout,
+    depth_bind_group_layout: &wgpu::BindGroupLayout,
+    render_mode_bind_group_layout: &wgpu::BindGroupLayout,
 ) -> wgpu::RenderPipeline {
 
     // Takes the shader file and sends it to GPU driver
@@ -23,6 +25,8 @@ pub fn create_render_pipeline(
             bind_group_layouts: &[
                 &texture_bind_group_layout,
                 &camera_bind_group_layout,
+                &depth_bind_group_layout,
+                &render_mode_bind_group_layout,
             ],
             immediate_size: 0,
         });

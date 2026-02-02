@@ -56,7 +56,8 @@ pub struct State {
     instances: Vec<Instance>,
     instance_buffer: wgpu::Buffer,
 
-    depth_texture: texture::Texture,
+    depth_texture: texture::Texture, // Used for depth testing
+    depth_visualization_texture: texture::Texture, // Used for depth visualization
     depth_visualization_mode: bool,
     depth_texture_bind_group: wgpu::BindGroup,
     depth_texture_bind_group_layout: wgpu::BindGroupLayout,
@@ -255,6 +256,7 @@ impl State {
         let num_indices_2 = vertex::COMPLEX_SHAPE_INDICES.len() as u32;
 
         let depth_texture = texture::Texture::create_depth_texture(&device, &config, "Depth Texture");
+        let depth_visualization_texture = texture::Texture::create_depth_texture(&device, &config, "Depth Visualization Texture");
 
         // Create bind group using depth bind group layout
         let depth_texture_bind_group = texture::create_bind_group_from_texture(
@@ -306,6 +308,8 @@ impl State {
                 &config,
                 &diffuse_bind_group_layout,
                 &camera_bind_group_layout,
+                &depth_texture_bind_group_layout,
+                &render_mode_bind_group_layout,
             );
 
         Ok(Self {
@@ -337,6 +341,7 @@ impl State {
             instances,
             instance_buffer,
             depth_texture,
+            depth_visualization_texture,
             depth_texture_bind_group,
             depth_texture_bind_group_layout,
             depth_visualization_mode: false,
@@ -360,13 +365,14 @@ impl State {
             // we pass the actual and updated self fields, else we would be creating
             // depth texture with old size before the update
             self.depth_texture = texture::Texture::create_depth_texture(&self.device, &self.config, "Depth Texture");
+            self.depth_visualization_texture = texture::Texture::create_depth_texture(&self.device, &self.config, "Depth Visualization Texture");
 
             // For depth visualization mode, recreate bind group when resize is called
             // so we have the correct depth texture
             self.depth_texture_bind_group = texture::create_bind_group_from_texture(
                 &self.device,
                 &self.depth_texture_bind_group_layout,
-                &self.depth_texture,
+                &self.depth_visualization_texture,
             )
         }
     }
@@ -388,6 +394,19 @@ impl State {
     pub fn toggle_depth_visualization(&mut self) {
         // Simple toggle for depth visualization mode
         self.depth_visualization_mode = !self.depth_visualization_mode;
+
+        // Update render uniform buffer with new mode
+        let render_mode_uniform = RenderModeUniform {
+            mode: if self.depth_visualization_mode { 1 } else { 0 },
+            _padding: [0; 3],
+        };
+
+        // Write to the GPU buffer in what mode we want to be
+        self.queue.write_buffer(
+            &self.render_mode_buffer,
+            0,
+            bytemuck::cast_slice(&[render_mode_uniform]),
+        );
     }
 
     pub fn window(&self) -> &Arc<Window> {
@@ -457,6 +476,10 @@ impl State {
             render_pass.set_bind_group(0, &self.diffuse_bind_group, &[]);
             // Set the bind group for the camera uniform
             render_pass.set_bind_group(1, &self.camera_bind_group, &[]);
+            // Set the bind group for the depth texture
+            render_pass.set_bind_group(2, &self.depth_texture_bind_group, &[]);
+            // Set the bind group for the render mode uniform
+            render_pass.set_bind_group(3, &self.render_mode_bind_group, &[]);
 
             // Buffer selection based on active shape
             // If active_shape is 0, use first buffers, else use second buffers
@@ -490,6 +513,7 @@ impl State {
             // 3rd param: Range of instances to draw (for instanced rendering)
             render_pass.draw_indexed(0..num_indices, 0, 0..self.instances.len() as _);
         } // Scope ends here, so render_pass is dropped and encoder can be used again
+
 
         // Submit commands to GPU queue for execution
         // Submit will accept anything that implements IntoIterator<Item=&CommandBuffer>
