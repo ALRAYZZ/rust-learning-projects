@@ -1,5 +1,11 @@
-use std::mem;
-
+// This module allows instancing, which is rendering multiple copies of the same object with different transformations
+// --- Instance Data for "Draw Call" Optimization ---
+// Goal: Render thousands of copies of the same mesh (Pentagon) in a single command.
+// logic:
+// 1. Instance: High-level Rust data (Position/Rotation).
+// 2. InstanceRaw: GPU-ready 4x4 Model Matrix (collapses TRS into one step).
+// 3. step_mode: Instance: Tells GPU "Use one matrix per object, not per vertex."
+// 4. VertexAttributes: Splits the 4x4 matrix into 4 'slots' for the shader.
 pub struct Instance {
     pub position: cgmath::Vector3<f32>,
     pub rotation: cgmath::Quaternion<f32>, // Quaternion is a math representation for 3D rotations

@@ -87,6 +87,58 @@ impl Texture {
 
         Ok(Self { texture, texture_view, sampler })
     }
+
+    // Creating a depth texture for depth testing in 3D rendering
+    // Depth format needed for creating depth stage of the render pipeline
+    pub const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
+
+
+
+    // Depth texture is a special texture used to store depth information for 3D rendering
+    // The layout is a 1 to 1 mapping with the screen pixels, where each pixel holds a depth value
+    // This allows the GPU to determine which objects are in front of others, enabling proper occlusion
+    pub fn create_depth_texture(
+        device: &wgpu::Device,
+        config: &wgpu::SurfaceConfiguration,
+        label: &str
+    ) -> Self {
+        // Depth texture needs to be same size as the screen to map 1:1 with pixels
+        let size = wgpu::Extent3d {
+            width: config.width.max(1),
+            height: config.height.max(1),
+            depth_or_array_layers: 1,
+        };
+        let desc = wgpu::TextureDescriptor {
+            label: Some(label),
+            size,
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: Self::DEPTH_FORMAT,
+            // We need to render to it and sample from it in shaders
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+            view_formats: &[],
+        };
+        let texture = device.create_texture(&desc);
+
+        let texture_view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+        let sampler = device.create_sampler(
+            &wgpu::SamplerDescriptor {
+                address_mode_u: wgpu::AddressMode::ClampToEdge,
+                address_mode_v: wgpu::AddressMode::ClampToEdge,
+                address_mode_w: wgpu::AddressMode::ClampToEdge,
+                mag_filter: wgpu::FilterMode::Linear,
+                min_filter: wgpu::FilterMode::Linear,
+                mipmap_filter: wgpu::MipmapFilterMode::Nearest,
+                compare: Some(wgpu::CompareFunction::LessEqual),
+                lod_min_clamp: 0.0,
+                lod_max_clamp: 100.0,
+                ..Default::default()
+            }
+        );
+
+        Self { texture, texture_view, sampler }
+    }
 }
 
 
@@ -152,7 +204,7 @@ pub fn load_texture_from_bytes(
     queue: &wgpu::Queue,
     bind_group_layout: &wgpu::BindGroupLayout,
     bytes: &[u8],
-) -> anyhow::Result<wgpu::BindGroup> {
+) -> Result<wgpu::BindGroup> {
     let texture = Texture::from_bytes(device, queue, bytes, "load_texture")?;
     Ok(create_bind_group_from_texture(device, bind_group_layout, &texture))
 }

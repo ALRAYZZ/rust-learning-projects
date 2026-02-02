@@ -45,6 +45,8 @@ pub struct State {
 
     instances: Vec<Instance>,
     instance_buffer: wgpu::Buffer,
+
+    depth_texture: texture::Texture,
 }
 
 const NUM_INSTANCES_PER_ROW: u32 = 10;
@@ -233,6 +235,9 @@ impl State {
         let num_vertices_2 = vertex::COMPLEX_SHAPE_VERTICES.len() as u32;
         let num_indices_2 = vertex::COMPLEX_SHAPE_INDICES.len() as u32;
 
+        let depth_texture = texture::Texture::create_depth_texture(&device, &config, "Depth Texture");
+
+
         // Creating the render pipeline is one of the most expensive tasks GPU does,
         // GPU driver compiles shaders and optimizes the pipeline for the specific GPU
         // To do the optimization, GPU needs to know the SHAPE of the data, but it doesnt care
@@ -272,6 +277,7 @@ impl State {
             camera_controller,
             instances,
             instance_buffer,
+            depth_texture,
         })
     }
 
@@ -279,11 +285,17 @@ impl State {
     // Surface is a collection of buffers that need the right memory size to store the needed
     // amount of pixels, and that amount changes when window is resized
     pub fn resize(&mut self, width: u32, height: u32) {
+        // If check to avoid 0 sized surfaces -> panic in wgpu
         if width > 0 && height > 0 {
             self.config.width = width;
             self.config.height = height;
             self.surface.configure(&self.device, &self.config);
             self.is_surface_configured = true;
+            // Recreate depth texture for new size
+            // Important this is done after surface is configured
+            // we pass the actual and updated self fields, else we would be creating
+            // depth texture with old size before the update
+            self.depth_texture = texture::Texture::create_depth_texture(&self.device, &self.config, "Depth Texture");
         }
     }
 
@@ -347,7 +359,14 @@ impl State {
                         store: wgpu::StoreOp::Store, // Store the result in memory after render pass
                     },
                 })],
-                depth_stencil_attachment: None,
+                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                    view: &self.depth_texture.texture_view,
+                    depth_ops: Some(wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(1.0), // Clear depth to farthest
+                        store: wgpu::StoreOp::Store,
+                    }),
+                    stencil_ops: None,
+                }),
                 occlusion_query_set: None,
                 timestamp_writes: None,
                 multiview_mask: None,
