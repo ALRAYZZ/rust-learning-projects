@@ -36,6 +36,7 @@ pub struct State {
 
     diffuse_bind_group: wgpu::BindGroup,
     diffuse_texture: texture::Texture,
+    diffuse_bind_group_layout: wgpu::BindGroupLayout,
 
     camera: camera::Camera,
     camera_uniform: CameraUniform,
@@ -48,6 +49,8 @@ pub struct State {
 
     depth_texture: texture::Texture,
     depth_visualization_mode: bool,
+    depth_texture_bind_group: wgpu::BindGroup,
+    depth_texture_bind_group_layout: wgpu::BindGroupLayout,
 }
 
 const NUM_INSTANCES_PER_ROW: u32 = 10;
@@ -124,8 +127,11 @@ impl State {
         let diffuse_bytes = include_bytes!("../assets/happy-tree.png");
 
         // Create bind group layout
-        let texture_bind_group_layout =
+        let diffuse_bind_group_layout =
             texture::create_texture_bind_group_layout(&device);
+
+        let depth_texture_bind_group_layout =
+            texture::create_depth_bind_group_layout(&device);
 
         // Helper method to transform image bytes into Texture object in GPU memory
         // Textures are not only image data, but is a combination of:
@@ -142,7 +148,7 @@ impl State {
         let diffuse_bind_group =
             texture::create_bind_group_from_texture(
                 &device,
-                &texture_bind_group_layout,
+                &diffuse_bind_group_layout,
                 &diffuse_texture,
             );
 
@@ -238,6 +244,14 @@ impl State {
 
         let depth_texture = texture::Texture::create_depth_texture(&device, &config, "Depth Texture");
 
+        // Create bind group using depth bind group layout
+        let depth_texture_bind_group = texture::create_bind_group_from_texture(
+            &device,
+            &depth_texture_bind_group_layout,
+            &depth_texture,
+        );
+
+
 
         // Creating the render pipeline is one of the most expensive tasks GPU does,
         // GPU driver compiles shaders and optimizes the pipeline for the specific GPU
@@ -247,7 +261,7 @@ impl State {
             pipeline::create_render_pipeline(
                 &device,
                 &config,
-                &texture_bind_group_layout,
+                &diffuse_bind_group_layout,
                 &camera_bind_group_layout,
             );
 
@@ -270,6 +284,7 @@ impl State {
             num_indices_2,
             active_shape: 0,
             diffuse_bind_group,
+            diffuse_bind_group_layout,
             diffuse_texture,
             camera,
             camera_uniform,
@@ -279,6 +294,8 @@ impl State {
             instances,
             instance_buffer,
             depth_texture,
+            depth_texture_bind_group,
+            depth_texture_bind_group_layout,
             depth_visualization_mode: false,
         })
     }
@@ -298,6 +315,14 @@ impl State {
             // we pass the actual and updated self fields, else we would be creating
             // depth texture with old size before the update
             self.depth_texture = texture::Texture::create_depth_texture(&self.device, &self.config, "Depth Texture");
+
+            // For depth visualization mode, recreate bind group when resize is called
+            // so we have the correct depth texture
+            self.depth_texture_bind_group = texture::create_bind_group_from_texture(
+                &self.device,
+                &self.depth_texture_bind_group_layout,
+                &self.depth_texture,
+            )
         }
     }
 
