@@ -6,6 +6,15 @@ use crate::graphics::camera::CameraUniform;
 use crate::graphics::instance::Instance;
 use crate::graphics::camera_controller::CameraController;
 
+// Struct to tell shader what render mode to use
+// Light switch for depth visualization
+#[repr(C)]
+#[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
+struct RenderModeUniform {
+    mode: u32, // 0 = normal, 1 = depth visualization, add more future?
+    _padding: [u32; 3], // GPU requires 16 byte alignment for uniforms
+}
+
 // THE ENGINE
 // GPU context. Live inside APP, holds device, queue, surface, config, translates logic into
 // binary commands for GPU
@@ -51,6 +60,9 @@ pub struct State {
     depth_visualization_mode: bool,
     depth_texture_bind_group: wgpu::BindGroup,
     depth_texture_bind_group_layout: wgpu::BindGroupLayout,
+
+    render_mode_buffer: wgpu::Buffer,
+    render_mode_bind_group: wgpu::BindGroup,
 }
 
 const NUM_INSTANCES_PER_ROW: u32 = 10;
@@ -251,6 +263,37 @@ impl State {
             &depth_texture,
         );
 
+        // Create render mode uniform buffer
+        let render_mode_uniform = RenderModeUniform {
+            mode: 0, // Start in normal mode
+            _padding: [0; 3],
+        };
+
+        let render_mode_buffer = buffers::create_uniform_buffer(&device, &render_mode_uniform);
+
+        let render_mode_bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("Render Mode Bind Group Layout"),
+            entries: &[wgpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Uniform,
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            }],
+        });
+
+        let render_mode_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("Render Mode Bind Group"),
+            layout: &render_mode_bind_group_layout,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: render_mode_buffer.as_entire_binding(),
+            }],
+        });
+
 
 
         // Creating the render pipeline is one of the most expensive tasks GPU does,
@@ -297,6 +340,8 @@ impl State {
             depth_texture_bind_group,
             depth_texture_bind_group_layout,
             depth_visualization_mode: false,
+            render_mode_buffer,
+            render_mode_bind_group,
         })
     }
 

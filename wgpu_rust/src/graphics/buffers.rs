@@ -27,11 +27,15 @@ pub fn create_index_buffer(device: &wgpu::Device, indices: &[u16])
 // Uniform buffer holds data that remains constant for entire draw calls
 // while vertex data(position, color, uvs) change for every point drawn, a uniform buffer holds
 // the data that stays the same for every part of the shape, camera position, light direction, etc
-pub fn create_uniform_buffer(device: &wgpu::Device, camera_uniform: &CameraUniform) -> wgpu::Buffer {
+// METHOD made GENERIC to accept any type that implements bytemuck::Pod + bytemuck::Zeroable
+pub fn create_uniform_buffer<T: bytemuck::Pod + bytemuck::Zeroable>(
+    device: &wgpu::Device,
+    data: &T
+) -> wgpu::Buffer {
     device.create_buffer_init(
         &wgpu::util::BufferInitDescriptor {
-            label: Some("Camera Uniform Buffer"),
-            contents: bytemuck::cast_slice(&[*camera_uniform]),
+            label: Some("Uniform Buffer"),
+            contents: bytemuck::cast_slice(&[*data]),
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         }
     )
