@@ -84,10 +84,15 @@ var s_diffuse: sampler; // Sampler bound to group 0 binding 1
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     if (render_mode.mode == 1u) {
-        // depth visualization
-        let d = textureSample(depth_tex, depth_sampler, in.screen_uv);
-        let vis = pow(d, 0.1);
-        return vec4<f32>(vis, vis, vis, 1.0);
+        let coords = vec2<i32>(in.clip_position.xy);
+            let d = textureLoad(depth_tex, coords, 0);
+
+            // If d is 0.99, this becomes 0.01.
+            // If d is 1.0 (background), this becomes 0.0.
+            let visualize = 1.0 - d;
+
+            // Multiply by a huge number to force it to show up
+            return vec4<f32>(vec3<f32>(visualize * 100.0), 1.0);
     }
 
     // normal textured rendering
