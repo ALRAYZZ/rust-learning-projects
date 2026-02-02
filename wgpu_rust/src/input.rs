@@ -7,6 +7,7 @@ pub enum InputAction {
     None,
     Exit,
     ToggleShape,
+    ToggleDepthVisualization,
 }
 
 impl InputHandler {
@@ -19,6 +20,7 @@ impl InputHandler {
                 InputAction::Exit
             }
             (KeyCode::Space, true) => InputAction::ToggleShape,
+            (KeyCode::KeyV, true) => InputAction::ToggleDepthVisualization,
             _ => InputAction::None,
         }
     }

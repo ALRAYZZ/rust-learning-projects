@@ -92,6 +92,7 @@ impl ApplicationHandler<State> for App {
                 let action = InputHandler::handle_key(event_loop, code, key_state.is_pressed());
                 match action {
                     InputAction::ToggleShape => state.toggle_shape(),
+                    InputAction::ToggleDepthVisualization => state.toggle_depth_visualization(),
                     InputAction::Exit => event_loop.exit(),
                     _ => {}
                 }

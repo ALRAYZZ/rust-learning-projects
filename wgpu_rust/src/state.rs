@@ -47,6 +47,7 @@ pub struct State {
     instance_buffer: wgpu::Buffer,
 
     depth_texture: texture::Texture,
+    depth_visualization_mode: bool,
 }
 
 const NUM_INSTANCES_PER_ROW: u32 = 10;
@@ -278,6 +279,7 @@ impl State {
             instances,
             instance_buffer,
             depth_texture,
+            depth_visualization_mode: false,
         })
     }
 
@@ -309,7 +311,13 @@ impl State {
 
     pub fn toggle_shape(&mut self) {
         // Toggle logic: if 0 and method called, set to 1
+        // Potentially use enum if more shapes are added
         self.active_shape = if self.active_shape == 0 { 1 } else { 0 };
+    }
+
+    pub fn toggle_depth_visualization(&mut self) {
+        // Simple toggle for depth visualization mode
+        self.depth_visualization_mode = !self.depth_visualization_mode;
     }
 
     pub fn window(&self) -> &Arc<Window> {
