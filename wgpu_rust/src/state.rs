@@ -5,6 +5,8 @@ use crate::graphics::{vertex, pipeline, texture, camera, buffers};
 use crate::graphics::camera::CameraUniform;
 use crate::graphics::instance::Instance;
 use crate::graphics::camera_controller::CameraController;
+use crate::model::DrawModel;
+use crate::{model, resources};
 
 // Struct to tell shader what render mode to use
 // Light switch for depth visualization
@@ -64,6 +66,8 @@ pub struct State {
 
     render_mode_buffer: wgpu::Buffer,
     render_mode_bind_group: wgpu::BindGroup,
+
+    obj_model: model::Model,
 }
 
 const NUM_INSTANCES_PER_ROW: u32 = 10;
@@ -206,12 +210,16 @@ impl State {
         // Create controls for the camera with a given speed
         let camera_controller = CameraController::new(0.1);
 
+        const SPACE_BETWEEN: f32 = 3.0;
+
         // Generate a list of positions and rotations for instances based on a grid
         // mapping over X and Z axis to create rows and columns
         let instances = (0..NUM_INSTANCES_PER_ROW).flat_map(|z| {
             (0..NUM_INSTANCES_PER_ROW).map(move |x| {
-                let position =
-                    cgmath::Vector3 {x: x as f32, y: 0.0, z: z as f32} - INSTANCE_DISPLACEMENT;
+                let x = SPACE_BETWEEN * (x as f32 - NUM_INSTANCES_PER_ROW as f32 / 2.0);
+                let z = SPACE_BETWEEN * (z as f32 - NUM_INSTANCES_PER_ROW as f32 / 2.0);
+
+                let position = cgmath::Vector3 { x, y: 0.0, z };
 
                 let rotation = if position.is_zero() {
                     // Needed so object at (0,0,0) wont get scaled to zero
@@ -240,6 +248,15 @@ impl State {
             b: 0.3,
             a: 1.0,
         };
+
+        let obj_model =
+            resources::load_model(
+                "cube.obj",
+                &device,
+                &queue,
+                &diffuse_bind_group_layout,
+            )
+            .await?;
 
         // Buffers creation
         let vertex_buffer = buffers::create_vertex_buffer(&device, vertex::PENT_VERTICES);
@@ -347,6 +364,7 @@ impl State {
             depth_visualization_mode: false,
             render_mode_buffer,
             render_mode_bind_group,
+            obj_model,
         })
     }
 
@@ -507,11 +525,12 @@ impl State {
             // This way we dont have to duplicate vertex data in memory
             render_pass.set_index_buffer(index_buffer.slice(..), wgpu::IndexFormat::Uint16);
 
+            use model::DrawModel;
             // Draw call
             // 1st param: Range of indices to use from index buffer
             // 2nd param: Base vertex, added to each index from index buffer (useful for sub-meshes)
             // 3rd param: Range of instances to draw (for instanced rendering)
-            render_pass.draw_indexed(0..num_indices, 0, 0..self.instances.len() as _);
+            render_pass.draw_mesh_instanced(&self.obj_model.meshes[0], 0..self.instances.len() as u32);
         } // Scope ends here, so render_pass is dropped and encoder can be used again
 
 

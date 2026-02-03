@@ -8,6 +8,7 @@ pub struct Texture {
 }
 
 impl Texture {
+    // Method used to create a texture from raw bytes (e.g., loaded from a file)
     pub fn from_bytes(
         device: &wgpu::Device,
         queue: &wgpu::Queue,

@@ -1,3 +1,8 @@
+// File creates raw vertex data for models to be sent to GPU
+// Unused since we load models from files now, but kept for reference and testing
+// model.rs handles model loading from files now
+
+
 // repr(C) ensures the struct has a predictable memory layout C style so no unexpected padding or
 // reordering occurs, important for GPU data
 

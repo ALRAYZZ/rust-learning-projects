@@ -2,6 +2,9 @@ mod app;
 mod state;
 mod input;
 mod graphics;
+mod model;
+
+mod resources;
 
 pub use app::App;
 

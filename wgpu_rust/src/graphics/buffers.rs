@@ -7,7 +7,18 @@ pub fn create_vertex_buffer(device: &wgpu::Device, vertices: &[crate::graphics::
     -> wgpu::Buffer {
     device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("Vertex Buffer"),
-            contents: bytemuck::cast_slice(vertices),
+            contents: bytemuck::cast_slice(&vertices),
+            usage: wgpu::BufferUsages::VERTEX,
+        }
+    )
+}
+
+// New implementation for model vertices struct used for the loading 3d models from obj files
+pub fn create_model_vertex_buffer(device: &wgpu::Device, vertices: &[crate::model::ModelVertex])
+    -> wgpu::Buffer {
+    device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Model Vertex Buffer"),
+            contents: bytemuck::cast_slice(&vertices),
             usage: wgpu::BufferUsages::VERTEX,
         }
     )
@@ -18,6 +29,17 @@ pub fn create_index_buffer(device: &wgpu::Device, indices: &[u16])
     -> wgpu::Buffer {
     device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("Index Buffer"),
+            contents: bytemuck::cast_slice(indices),
+            usage: wgpu::BufferUsages::INDEX,
+        }
+    )
+}
+
+// New implementation for model vertices struct used for the loading 3d models from obj files
+pub fn create_model_index_buffer(device: &wgpu::Device, indices: &[u32])
+    -> wgpu::Buffer {
+    device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Model Index Buffer"),
             contents: bytemuck::cast_slice(indices),
             usage: wgpu::BufferUsages::INDEX,
         }
