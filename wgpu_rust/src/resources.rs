@@ -46,6 +46,7 @@ pub async fn load_model(
     let obj_cursor = Cursor::new(obj_text);
     let mut obj_reader = BufReader::new(obj_cursor);
 
+    // Loads in memory the obj model and its associated mtl materials
     let (models, obj_materials) = tobj::load_obj_buf_async(
         &mut obj_reader,
         &tobj::LoadOptions {
@@ -57,10 +58,10 @@ pub async fn load_model(
             let mat_text = load_string(&p).await.unwrap();
             tobj::load_mtl_buf(&mut BufReader::new(Cursor::new(mat_text)))
         },
-    )
-        .await?;
+    ).await?;
 
     let mut materials = Vec::new();
+    // Create materials from the loaded obj materials
     for m in obj_materials? {
         let diffuse_texture = load_texture(&m.diffuse_texture, device, queue).await?;
         let bind_group = texture::create_bind_group_from_texture(&device, layout, &diffuse_texture);
@@ -72,11 +73,14 @@ pub async fn load_model(
         })
     }
 
+    // Create meshes from the loaded models
+    // Pack the model data into ModelVertex structs
     let meshes = models
         .into_iter()
         .map(|m| {
             let vertices = (0..m.mesh.positions.len() / 3)
                 .map(|i| {
+                    // If model not have normals, set them to 0.0
                     if m.mesh.normals.is_empty(){
                         model::ModelVertex {
                             position: [
@@ -105,10 +109,11 @@ pub async fn load_model(
                 })
                 .collect::<Vec<_>>();
 
+            // Create vertex and index buffers for the mesh
             let vertex_buffer = buffers::create_model_vertex_buffer(&device, &vertices);
-
             let index_buffer = buffers::create_model_index_buffer(&device, &m.mesh.indices);
 
+            // Create and return the mesh struct with its buffers, name, and material
             model::Mesh {
                 name: file_name.to_string(),
                 vertex_buffer,
