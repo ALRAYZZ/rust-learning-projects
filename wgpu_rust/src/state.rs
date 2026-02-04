@@ -31,20 +31,6 @@ pub struct State {
     pub(crate) window: Arc<Window>,
     render_pipeline: wgpu::RenderPipeline,
 
-    vertex_buffer: wgpu::Buffer,
-    index_buffer: wgpu::Buffer,
-
-    num_vertices: u32,
-    num_indices: u32,
-
-    vertex_buffer_2: wgpu::Buffer,
-    index_buffer_2: wgpu::Buffer,
-
-    num_vertices_2: u32,
-    num_indices_2: u32,
-
-    active_shape: usize,
-
     diffuse_bind_group: wgpu::BindGroup,
     diffuse_texture: texture::Texture,
     diffuse_bind_group_layout: wgpu::BindGroupLayout,
@@ -258,19 +244,6 @@ impl State {
             )
             .await?;
 
-        // Buffers creation
-        let vertex_buffer = buffers::create_vertex_buffer(&device, vertex::PENT_VERTICES);
-        let index_buffer = buffers::create_index_buffer(&device, vertex::PENT_INDICES);
-
-        let num_vertices = vertex::PENT_VERTICES.len() as u32;
-        let num_indices = vertex::PENT_INDICES.len() as u32;
-
-        // 2nd Buffer (different shape)
-        let vertex_buffer_2 = buffers::create_vertex_buffer(&device, vertex::COMPLEX_SHAPE_VERTICES);
-        let index_buffer_2 = buffers::create_index_buffer(&device, vertex::COMPLEX_SHAPE_INDICES);
-
-        let num_vertices_2 = vertex::COMPLEX_SHAPE_VERTICES.len() as u32;
-        let num_indices_2 = vertex::COMPLEX_SHAPE_INDICES.len() as u32;
 
         let depth_texture = texture::Texture::create_depth_texture(&device, &config, "Depth Texture");
         let depth_visualization_texture = texture::Texture::create_depth_texture(&device, &config, "Depth Visualization Texture");
@@ -338,15 +311,6 @@ impl State {
             window,
             clear_color,
             render_pipeline,
-            vertex_buffer,
-            index_buffer,
-            num_vertices,
-            num_indices,
-            vertex_buffer_2,
-            index_buffer_2,
-            num_vertices_2,
-            num_indices_2,
-            active_shape: 0,
             diffuse_bind_group,
             diffuse_bind_group_layout,
             diffuse_texture,
@@ -406,7 +370,8 @@ impl State {
     pub fn toggle_shape(&mut self) {
         // Toggle logic: if 0 and method called, set to 1
         // Potentially use enum if more shapes are added
-        self.active_shape = if self.active_shape == 0 { 1 } else { 0 };
+        // Removed implementation
+        //self.active_shape = if self.active_shape == 0 { 1 } else { 0 };
     }
 
     pub fn toggle_depth_visualization(&mut self) {
@@ -487,6 +452,28 @@ impl State {
                 multiview_mask: None,
             });
 
+
+
+            // Buffer selection based on active shape
+            // If active_shape is 0, use first buffers, else use second buffers
+            //let (vertex_buffer, index_buffer, num_indices) = if self.active_shape == 0 {
+            //    (&self.vertex_buffer, &self.index_buffer, self.num_indices)
+            //} else {
+            //    (&self.vertex_buffer_2, &self.index_buffer_2, self.num_indices_2)
+            //};
+
+
+
+            // Set the vertex buffer to use
+            // Method 1st param, is what buffer slot to use for this vertex buffer
+            // We can have multiple vertex buffers bound at once (positions, colors, uvs, etc)
+            // Second param, slice of the buffer to use, we can store multiple meshes in one buffer
+            // (..) means use full buffer
+            //render_pass.set_vertex_buffer(0, vertex_buffer.slice(..));
+
+            // Set the instance buffer (2nd vertex buffer slot)
+            render_pass.set_vertex_buffer(1, self.instance_buffer.slice(..));
+
             // Here we set the pipeline (shaders + fixed function state) and issue draw commands
             render_pass.set_pipeline(&self.render_pipeline);
 
@@ -499,31 +486,10 @@ impl State {
             // Set the bind group for the render mode uniform
             render_pass.set_bind_group(3, &self.render_mode_bind_group, &[]);
 
-            // Buffer selection based on active shape
-            // If active_shape is 0, use first buffers, else use second buffers
-            let (vertex_buffer, index_buffer, num_indices) = if self.active_shape == 0 {
-                (&self.vertex_buffer, &self.index_buffer, self.num_indices)
-            } else {
-                (&self.vertex_buffer_2, &self.index_buffer_2, self.num_indices_2)
-            };
-
-
-
-            // Set the vertex buffer to use
-            // Method 1st param, is what buffer slot to use for this vertex buffer
-            // We can have multiple vertex buffers bound at once (positions, colors, uvs, etc)
-            // Second param, slice of the buffer to use, we can store multiple meshes in one buffer
-            // (..) means use full buffer
-            render_pass.set_vertex_buffer(0, vertex_buffer.slice(..));
-
-            // Set the instance buffer (2nd vertex buffer slot)
-            render_pass.set_vertex_buffer(1, self.instance_buffer.slice(..));
-
-
             // Index buffer is a memory optimization to reuse vertices for multiple triangles
             // We create a matrix of indices saying what vertices are shared between triangles
             // This way we dont have to duplicate vertex data in memory
-            render_pass.set_index_buffer(index_buffer.slice(..), wgpu::IndexFormat::Uint16);
+            //render_pass.set_index_buffer(index_buffer.slice(..), wgpu::IndexFormat::Uint16);
 
             use model::DrawModel;
             // Draw call
