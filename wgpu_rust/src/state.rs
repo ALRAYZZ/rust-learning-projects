@@ -454,6 +454,7 @@ impl State {
 
 
 
+            // Removed impl. Using model loader instead
             // Buffer selection based on active shape
             // If active_shape is 0, use first buffers, else use second buffers
             //let (vertex_buffer, index_buffer, num_indices) = if self.active_shape == 0 {
@@ -469,6 +470,7 @@ impl State {
             // We can have multiple vertex buffers bound at once (positions, colors, uvs, etc)
             // Second param, slice of the buffer to use, we can store multiple meshes in one buffer
             // (..) means use full buffer
+            // Removed implementation for single model loaded from obj
             //render_pass.set_vertex_buffer(0, vertex_buffer.slice(..));
 
             // Set the instance buffer (2nd vertex buffer slot)
@@ -477,10 +479,13 @@ impl State {
             // Here we set the pipeline (shaders + fixed function state) and issue draw commands
             render_pass.set_pipeline(&self.render_pipeline);
 
+            // OLD IMPLEMENTATION OF HARDCODED GEOMETRY
             // Set the bind group for the texture
-            render_pass.set_bind_group(0, &self.diffuse_bind_group, &[]);
+            //render_pass.set_bind_group(0, &self.diffuse_bind_group, &[]);
             // Set the bind group for the camera uniform
-            render_pass.set_bind_group(1, &self.camera_bind_group, &[]);
+            //render_pass.set_bind_group(1, &self.camera_bind_group, &[]);
+
+
             // Set the bind group for the depth texture
             render_pass.set_bind_group(2, &self.depth_texture_bind_group, &[]);
             // Set the bind group for the render mode uniform
@@ -491,12 +496,13 @@ impl State {
             // This way we dont have to duplicate vertex data in memory
             //render_pass.set_index_buffer(index_buffer.slice(..), wgpu::IndexFormat::Uint16);
 
+            let mesh = &self.obj_model.meshes[0];
+            let material = &self.obj_model.materials[mesh.material];
+
             use model::DrawModel;
             // Draw call
-            // 1st param: Range of indices to use from index buffer
-            // 2nd param: Base vertex, added to each index from index buffer (useful for sub-meshes)
-            // 3rd param: Range of instances to draw (for instanced rendering)
-            render_pass.draw_mesh_instanced(&self.obj_model.meshes[0], 0..self.instances.len() as u32);
+            // Draw the model with instancing
+            render_pass.draw_mesh_instanced(mesh, material, 0..self.instances.len() as u32, &self.camera_bind_group);
         } // Scope ends here, so render_pass is dropped and encoder can be used again
 
 

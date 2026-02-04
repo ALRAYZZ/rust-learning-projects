@@ -66,6 +66,7 @@ pub async fn load_model(
         let diffuse_texture = load_texture(&m.diffuse_texture, device, queue).await?;
         let bind_group = texture::create_bind_group_from_texture(&device, layout, &diffuse_texture);
 
+        // Store the material we got from the obj file into the Rust Material struct
         materials.push(model::Material {
             name: m.name,
             diffuse_texture,
