@@ -473,7 +473,7 @@ impl State {
             // Removed implementation for single model loaded from obj
             //render_pass.set_vertex_buffer(0, vertex_buffer.slice(..));
 
-            // Set the instance buffer (2nd vertex buffer slot)
+            // Set the instance buffer at slot 1 for instanced rendering
             render_pass.set_vertex_buffer(1, self.instance_buffer.slice(..));
 
             // Here we set the pipeline (shaders + fixed function state) and issue draw commands
@@ -496,13 +496,11 @@ impl State {
             // This way we dont have to duplicate vertex data in memory
             //render_pass.set_index_buffer(index_buffer.slice(..), wgpu::IndexFormat::Uint16);
 
-            let mesh = &self.obj_model.meshes[0];
-            let material = &self.obj_model.materials[mesh.material];
 
             use model::DrawModel;
             // Draw call
             // Draw the model with instancing
-            render_pass.draw_mesh_instanced(mesh, material, 0..self.instances.len() as u32, &self.camera_bind_group);
+            render_pass.draw_model_instanced(&self.obj_model, 0..self.instances.len() as u32, &self.camera_bind_group);
         } // Scope ends here, so render_pass is dropped and encoder can be used again
 
 

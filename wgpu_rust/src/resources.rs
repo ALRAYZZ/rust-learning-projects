@@ -74,8 +74,7 @@ pub async fn load_model(
         })
     }
 
-    // Create meshes from the loaded models
-    // Pack the model data into ModelVertex structs
+    // Save every mesh in the model along with its buffers and material
     let meshes = models
         .into_iter()
         .map(|m| {

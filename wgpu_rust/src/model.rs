@@ -1,5 +1,5 @@
 use std::ops::Range;
-use wgpu::VertexBufferLayout;
+use wgpu::{BindGroup, VertexBufferLayout};
 use crate::graphics::texture;
 
 pub struct Model {
@@ -24,13 +24,25 @@ pub struct Mesh {
 
 // Making sure Mesh lives long enough for the draw calls
 pub trait DrawModel<'a> {
+    // Draw a single mesh with given material and camera bind group
     fn draw_mesh(&mut self, mesh: &'a Mesh, material: &'a Material, camera_bind_group: &'a wgpu::BindGroup);
+    // Draw multiple instances of a mesh with given material and camera bind group
     fn draw_mesh_instanced(
         &mut self,
         mesh: &'a Mesh,
         material: &'a Material,
         instances: Range<u32>,
         camera_bind_group: &'a wgpu::BindGroup
+    );
+
+    // Draw an entire model (all its meshes) with given camera bind group
+    fn draw_model(&mut self, model: &'a Model, camera_bind_group: &'a wgpu::BindGroup);
+    // Draw multiple instances of an entire model with given camera bind group
+    fn draw_model_instanced(
+        &mut self,
+        model: &'a Model,
+        instances: Range<u32>,
+        camera_bind_group: &'a wgpu::BindGroup,
     );
 }
 
@@ -56,6 +68,25 @@ where
         self.set_bind_group(0, &material.bind_group, &[]);
         self.set_bind_group(1, camera_bind_group, &[]);
         self.draw_indexed(0..mesh.num_elements, 0, instances);
+    }
+
+    // Draw the entire model by drawing each mesh in it
+    fn draw_model(&mut self, model: &'b Model, camera_bind_group: &'b wgpu::BindGroup) {
+        self.draw_model_instanced(model, 0..1, camera_bind_group);
+    }
+
+    // Draw multiple instances of the entire model (also 1)
+    fn draw_model_instanced(
+        &mut self,
+        model: &'b Model,
+        instances: Range<u32>,
+        camera_bind_group: &'b BindGroup
+    ) {
+        // Loop through each mesh in the mesh vector and draw it
+        for mesh in &model.meshes {
+            let material = &model.materials[mesh.material];
+            self.draw_mesh_instanced(mesh, material, instances.clone(), camera_bind_group);
+        }
     }
 }
 
