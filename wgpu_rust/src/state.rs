@@ -1,4 +1,4 @@
-use crate::model::Vertex;
+use crate::model::{DrawLight, Vertex};
 use std::sync::Arc;
 use cgmath::{InnerSpace, Rotation3, Zero};
 use winit::window::Window;
@@ -61,6 +61,8 @@ pub struct State {
     light_buffer: wgpu::Buffer,
     light_bind_group_layout: wgpu::BindGroupLayout,
     light_bind_group: wgpu::BindGroup,
+
+    light_render_pipeline: wgpu::RenderPipeline,
 }
 
 const NUM_INSTANCES_PER_ROW: u32 = 10;
@@ -310,6 +312,31 @@ impl State {
             &light_buffer
         );
 
+        // We create a separate pipeline for the light source because it has a diff shader
+        // and only uses the camera and light bind groups, not the texture or render mode bind groups
+        // This is a common optimization to avoid having one giant shader with many branches for different render modes
+        let light_render_pipeline = {
+            let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                    label: Some("Light Render Pipeline Layout"),
+                    bind_group_layouts: &[&camera_bind_group_layout, &light_bind_group_layout],
+                    immediate_size: 0,
+                }
+            );
+
+            let shader = wgpu::ShaderModuleDescriptor {
+                label: Some("Light Shader"),
+                source: wgpu::ShaderSource::Wgsl(include_str!("graphics/shaders/light.wgsl").into()),
+            };
+            create_render_pipeline(
+                &device,
+                &layout,
+                config.format,
+                Some(texture::Texture::DEPTH_FORMAT),
+                &[vertex::Vertex::desc()],
+                shader,
+            )
+        };
+
         // Create pipeline layout, which describes the bind groups that will be used in the render pipeline
         let render_pipeline_layout = device.create_pipeline_layout(
             &wgpu::PipelineLayoutDescriptor {
@@ -374,6 +401,7 @@ impl State {
             light_buffer,
             light_bind_group_layout,
             light_bind_group,
+            light_render_pipeline,
         })
     }
 
@@ -530,14 +558,17 @@ impl State {
             // Set the instance buffer at slot 1 for instanced rendering
             render_pass.set_vertex_buffer(1, self.instance_buffer.slice(..));
 
+
+            // Set new PIPELINE for light source, we want to draw it with a different shader and only use camera and light bind groups
+            render_pass.set_pipeline(&self.light_render_pipeline);
+            render_pass.draw_light_model(
+                &self.obj_model,
+                &self.camera_bind_group,
+                &self.light_bind_group,
+            );
+
             // Here we set the pipeline (shaders + fixed function state) and issue draw commands
             render_pass.set_pipeline(&self.render_pipeline);
-
-            // OLD IMPLEMENTATION OF HARDCODED GEOMETRY
-            // Set the bind group for the texture
-            //render_pass.set_bind_group(0, &self.diffuse_bind_group, &[]);
-            // Set the bind group for the camera uniform
-            //render_pass.set_bind_group(1, &self.camera_bind_group, &[]);
 
 
             // Set the bind group for the depth texture
@@ -545,7 +576,7 @@ impl State {
             // Set the bind group for the render mode uniform
             render_pass.set_bind_group(3, &self.render_mode_bind_group, &[]);
             // Set the bind group for the light uniform
-            render_pass.set_bind_group(4, &self.light_bind_group, &[]);
+            //render_pass.set_bind_group(4, &self.light_bind_group, &[]);
 
             // Index buffer is a memory optimization to reuse vertices for multiple triangles
             // We create a matrix of indices saying what vertices are shared between triangles
@@ -556,7 +587,12 @@ impl State {
             use model::DrawModel;
             // Draw call
             // Draw the model with instancing
-            render_pass.draw_model_instanced(&self.obj_model, 0..self.instances.len() as u32, &self.camera_bind_group);
+            render_pass.draw_model_instanced(
+                &self.obj_model,
+                0..self.instances.len() as u32,
+                &self.camera_bind_group,
+                &self.light_bind_group
+            );
         } // Scope ends here, so render_pass is dropped and encoder can be used again
 
 
