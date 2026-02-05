@@ -1,12 +1,12 @@
 use std::sync::Arc;
 use cgmath::{InnerSpace, Rotation3, Zero};
 use winit::window::Window;
-use crate::graphics::{vertex, pipeline, texture, camera, buffers};
+use crate::graphics::{vertex, pipeline, texture, camera, buffers, light};
 use crate::graphics::camera::CameraUniform;
 use crate::graphics::instance::Instance;
 use crate::graphics::camera_controller::CameraController;
-use crate::model::DrawModel;
 use crate::{model, resources};
+use crate::graphics::light::LightUniform;
 
 // Struct to tell shader what render mode to use
 // Light switch for depth visualization
@@ -54,6 +54,11 @@ pub struct State {
     render_mode_bind_group: wgpu::BindGroup,
 
     obj_model: model::Model,
+
+    light_uniform: LightUniform,
+    light_buffer: wgpu::Buffer,
+    light_bind_group_layout: wgpu::BindGroupLayout,
+    light_bind_group: wgpu::BindGroup,
 }
 
 const NUM_INSTANCES_PER_ROW: u32 = 10;
@@ -287,6 +292,27 @@ impl State {
         });
 
 
+        // Light creation
+        let light_uniform = LightUniform {
+            position: [2.0, 2.0, 2.0],
+            _padding: 0,
+            color: [1.0, 1.0, 1.0],
+            _padding2: 0,
+        };
+
+        let light_buffer = buffers::create_uniform_buffer(&device, &light_uniform);
+
+        // Create bind group for light uniform
+        let light_bind_group_layout = light::create_bind_group_layout(&device);
+        let light_bind_group = light::create_bind_group_from_light(
+            &device,
+            &light_bind_group_layout,
+            &light_buffer
+        );
+
+
+
+
 
         // Creating the render pipeline is one of the most expensive tasks GPU does,
         // GPU driver compiles shaders and optimizes the pipeline for the specific GPU
@@ -300,6 +326,7 @@ impl State {
                 &camera_bind_group_layout,
                 &depth_texture_bind_group_layout,
                 &render_mode_bind_group_layout,
+                &light_bind_group_layout,
             );
 
         Ok(Self {
@@ -329,6 +356,10 @@ impl State {
             render_mode_buffer,
             render_mode_bind_group,
             obj_model,
+            light_uniform,
+            light_buffer,
+            light_bind_group_layout,
+            light_bind_group,
         })
     }
 
@@ -397,9 +428,18 @@ impl State {
     }
 
     pub fn update(&mut self) {
+        // Camera update
         self.camera_controller.update_camera(&mut self.camera);
         self.camera_uniform.update_view_proj(&self.camera);
         self.queue.write_buffer(&self.camera_buffer, 0, bytemuck::cast_slice(&[self.camera_uniform]));
+
+        // Light Update
+        let old_position: cgmath::Vector3<_> = self.light_uniform.position.into();
+        self.light_uniform.position =
+            (cgmath::Quaternion::from_axis_angle((0.0, 1.0, 0.0).into(), cgmath::Deg(1.0))
+                * old_position)
+                .into();
+        self.queue.write_buffer(&self.light_buffer, 0, bytemuck::cast_slice(&[self.light_uniform]));
     }
 
     pub fn render(&mut self) -> Result<(), wgpu::SurfaceError> {
