@@ -1,12 +1,14 @@
+use crate::model::Vertex;
 use std::sync::Arc;
 use cgmath::{InnerSpace, Rotation3, Zero};
 use winit::window::Window;
 use crate::graphics::{vertex, pipeline, texture, camera, buffers, light};
 use crate::graphics::camera::CameraUniform;
-use crate::graphics::instance::Instance;
+use crate::graphics::instance::{Instance, InstanceRaw};
 use crate::graphics::camera_controller::CameraController;
 use crate::{model, resources};
 use crate::graphics::light::LightUniform;
+use crate::graphics::pipeline::create_render_pipeline;
 
 // Struct to tell shader what render mode to use
 // Light switch for depth visualization
@@ -100,11 +102,9 @@ impl State {
                 label: None,
                 required_features: wgpu::Features::empty(),
                 experimental_features: wgpu::ExperimentalFeatures::disabled(),
-                // WebGL doesnt support all wgpu features
-                required_limits: if cfg!(target_arch = "wasm32") {
-                    wgpu::Limits::downlevel_webgl2_defaults()
-                } else {
-                    wgpu::Limits::default()
+                required_limits: wgpu::Limits {
+                    max_bind_groups: 6,
+                    ..wgpu::Limits::default()
                 },
                 memory_hints: Default::default(),
                 trace: wgpu::Trace::Off,
@@ -175,7 +175,7 @@ impl State {
         });
 
         // Create camera uniform and update with camera data (The data)
-        let mut camera_uniform = camera::CameraUniform::new();
+        let mut camera_uniform = CameraUniform::new();
         camera_uniform.update_view_proj(&camera);
 
         // Create uniform buffer(GPU) for camera (The container)
@@ -183,7 +183,7 @@ impl State {
 
         // Create bind group layout for camera uniform
         let camera_bind_group_layout =
-            camera::CameraUniform::create_bind_group_layout(&device);
+            CameraUniform::create_bind_group_layout(&device);
 
         // Create bind group for camera uniform (The connection)
         // We use a bind group for each resource (texture, uniform buffer, etc)
@@ -192,7 +192,7 @@ impl State {
         // When we set the uniform buffer, we set the entire bind group at once
         // and GPU can focus on rendering instead of fetching resources and doing checks
         let camera_bind_group =
-            camera::CameraUniform::create_bind_group(
+            CameraUniform::create_bind_group(
                 &device,
                 &camera_bind_group_layout,
                 &camera_buffer,
@@ -310,24 +310,38 @@ impl State {
             &light_buffer
         );
 
-
-
-
+        // Create pipeline layout, which describes the bind groups that will be used in the render pipeline
+        let render_pipeline_layout = device.create_pipeline_layout(
+            &wgpu::PipelineLayoutDescriptor {
+                label: Some("Render Pipeline Layout"),
+                bind_group_layouts: &[
+                    &diffuse_bind_group_layout,
+                    &camera_bind_group_layout,
+                    &depth_texture_bind_group_layout,
+                    &render_mode_bind_group_layout,
+                    &light_bind_group_layout,
+                ],
+                immediate_size: 0,
+            });
 
         // Creating the render pipeline is one of the most expensive tasks GPU does,
         // GPU driver compiles shaders and optimizes the pipeline for the specific GPU
         // To do the optimization, GPU needs to know the SHAPE of the data, but it doesnt care
         // about the actual data. This allows to build the pipeline once, and swap out data buffers
-        let render_pipeline =
-            pipeline::create_render_pipeline(
+        let render_pipeline = {
+            let shader = wgpu::ShaderModuleDescriptor {
+                label: Some("Normal Shader"),
+                source: wgpu::ShaderSource::Wgsl(include_str!("graphics/shaders/shader.wgsl").into()),
+            };
+            create_render_pipeline(
                 &device,
-                &config,
-                &diffuse_bind_group_layout,
-                &camera_bind_group_layout,
-                &depth_texture_bind_group_layout,
-                &render_mode_bind_group_layout,
-                &light_bind_group_layout,
-            );
+                &render_pipeline_layout,
+                config.format,
+                Some(texture::Texture::DEPTH_FORMAT),
+                &[model::ModelVertex::desc(), InstanceRaw::desc()],
+                shader,
+            )
+        };
 
         Ok(Self {
             surface,
@@ -530,6 +544,8 @@ impl State {
             render_pass.set_bind_group(2, &self.depth_texture_bind_group, &[]);
             // Set the bind group for the render mode uniform
             render_pass.set_bind_group(3, &self.render_mode_bind_group, &[]);
+            // Set the bind group for the light uniform
+            render_pass.set_bind_group(4, &self.light_bind_group, &[]);
 
             // Index buffer is a memory optimization to reuse vertices for multiple triangles
             // We create a matrix of indices saying what vertices are shared between triangles
