@@ -37,6 +37,7 @@ struct VertexInput {
     // Location means the layout location of the attribute in the vertex buffer
     @location(0) position: vec3<f32>, // Input attribute for vertex position
     @location(1) tex_coords: vec2<f32>,  // Input attribute for texture coordinates
+    @location(2) normal: vec3<f32>, // Input attribute for vertex normal (for lighting calculations)
 }
 
 // Data into rasterizer and fragment shader
@@ -46,7 +47,8 @@ struct VertexOutput {
     // while clip space is normalized device coordinates where (-1,-1) is bottom-left
     @builtin(position) clip_position: vec4<f32>, // Tells GPU about clip space position of vertex
     @location(0) tex_coords: vec2<f32>, // Pass texture coordinates to fragment shader
-    @location(1) screen_uv: vec2<f32>, // Pass screen uv to fragment shader
+    @location(1) world_normal: vec3<f32>, // Pass normal to fragment shader for lighting calculations
+    @location(2) world_position: vec3<f32>, // Pass world position to fragment shader for lighting calculations
 };
 
 // Need the light position data in this shader to actually do light calculations based on its position and color
@@ -70,16 +72,16 @@ fn vs_main(
         instance.model_matrix_3,
     );
     var out: VertexOutput;
-
-    // Actual transformation from model space to clip space (single poing from 3D file space to 2D screen space)
-    let clip = camera.view_proj * model_matrix * vec4<f32>(model.position, 1.0);
-
-    out.clip_position = clip;
+    // Passing data from vertex shader to fragment shader so it can do texturing and lighting calculations
     out.tex_coords = model.tex_coords;
+    out.world_normal = model.normal;
 
-    // Convert clip space to screen uv
-    let ndc: vec2<f32> = clip.xy / clip.w; // Normalize to NDC space
-    out.screen_uv = ndc * 0.5 + vec2<f32>(0.5, 0.5); // Convert NDC to UV space [0,1]
+    // Converting to World Space (Model position is relative to itself, bringing model matrix moves vertex to the world)
+    var world_position: vec4<f32> = model_matrix * vec4<f32>(model.position, 1.0);
+    out.world_position = world_position.xyz;
+
+    // Converting to Clip Space (this is where the Camera happens)
+    out.clip_position = camera.view_proj * world_position;
     return out;
 }
 
@@ -111,7 +113,12 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let ambient_strenght = 0.1;
     let ambient_color = light.color * ambient_strenght;
 
-    let result = ambient_color * object_color.xyz;
+    // Diffuse light
+    let light_dir = normalize(light.position - in.world_position);
+    let diffuse_strenght = max(dot(in.world_normal, light_dir), 0.0);
+    let diffuse_color = light.color * diffuse_strenght;
+
+    let result = (ambient_color + diffuse_color) * object_color.xyz;
 
     return vec4<f32>(result, object_color.a);
 }
