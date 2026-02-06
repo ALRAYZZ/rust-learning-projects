@@ -341,12 +341,12 @@ impl State {
         let render_pipeline_layout = device.create_pipeline_layout(
             &wgpu::PipelineLayoutDescriptor {
                 label: Some("Render Pipeline Layout"),
-                bind_group_layouts: &[
-                    &diffuse_bind_group_layout,
+                bind_group_layouts: &[ // this defines the group number we will use on shader
+                    &diffuse_bind_group_layout, // -> 1
                     &camera_bind_group_layout,
                     &depth_texture_bind_group_layout,
                     &render_mode_bind_group_layout,
-                    &light_bind_group_layout,
+                    &light_bind_group_layout, // -> 4
                 ],
                 immediate_size: 0,
             });

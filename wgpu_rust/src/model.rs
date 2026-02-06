@@ -10,7 +10,7 @@ pub struct Model {
 pub struct Material {
     pub name: String,
     pub diffuse_texture: texture::Texture,
-    pub bind_group: wgpu::BindGroup,
+    pub bind_group: BindGroup,
 }
 
 pub struct Mesh {
@@ -118,6 +118,8 @@ where
     }
 }
 
+// Implementation of specific draw calls for the light shader,
+// which only needs the camera and light bind groups
 pub trait DrawLight<'a> {
     fn draw_light_mesh(
         &mut self,

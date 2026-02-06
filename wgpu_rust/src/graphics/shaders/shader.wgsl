@@ -49,6 +49,14 @@ struct VertexOutput {
     @location(1) screen_uv: vec2<f32>, // Pass screen uv to fragment shader
 };
 
+// Need the light position data in this shader to actually do light calculations based on its position and color
+struct Light {
+    position: vec3<f32>,
+    color: vec3<f32>,
+}
+@group(4) @binding(0)
+var<uniform> light: Light;
+
 @vertex // Signals its an entry point for the vertex shader
 fn vs_main(
     model: VertexInput,
@@ -83,6 +91,7 @@ var s_diffuse: sampler; // Sampler bound to group 0 binding 1
 
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
+    // If render mode is 1, visualize the depth buffer instead of the texture
     if (render_mode.mode == 1u) {
         let coords = vec2<i32>(in.clip_position.xy);
             let d = textureLoad(depth_tex, coords, 0);
@@ -96,5 +105,13 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     }
 
     // normal textured rendering
-    return textureSample(t_diffuse, s_diffuse, in.tex_coords);
+    let object_color: vec4<f32> = textureSample(t_diffuse, s_diffuse, in.tex_coords);
+
+    // Simple ambient light
+    let ambient_strenght = 0.1;
+    let ambient_color = light.color * ambient_strenght;
+
+    let result = ambient_color * object_color.xyz;
+
+    return vec4<f32>(result, object_color.a);
 }
