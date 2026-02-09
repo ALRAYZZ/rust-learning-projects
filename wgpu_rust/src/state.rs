@@ -214,13 +214,9 @@ impl State {
 
                 let position = cgmath::Vector3 { x, y: 0.0, z };
 
-                let rotation = if position.is_zero() {
-                    // Needed so object at (0,0,0) wont get scaled to zero
-                    // Quaternions can affect scale if not created correctly
-                    cgmath::Quaternion::from_axis_angle(cgmath::Vector3::unit_z(), cgmath::Deg(0.0))
-                } else {
-                    cgmath::Quaternion::from_axis_angle(position.normalize(), cgmath::Deg(45.0))
-                };
+                let rotation = cgmath::Quaternion::from_axis_angle(
+                    (0.0, 1.0, 0.0).into(), cgmath::Deg(180.0)
+                );
 
                 Instance {
                     position, rotation,
@@ -294,7 +290,7 @@ impl State {
         });
 
 
-        // Light creation
+        // Light source creation with position and color
         let light_uniform = LightUniform {
             position: [2.0, 2.0, 2.0],
             _padding: 0,
@@ -475,10 +471,10 @@ impl State {
         self.camera_uniform.update_view_proj(&self.camera);
         self.queue.write_buffer(&self.camera_buffer, 0, bytemuck::cast_slice(&[self.camera_uniform]));
 
-        // Light Update
+        // Light Position update
         let old_position: cgmath::Vector3<_> = self.light_uniform.position.into();
         self.light_uniform.position =
-            (cgmath::Quaternion::from_axis_angle((0.0, 1.0, 0.0).into(), cgmath::Deg(1.0))
+            (cgmath::Quaternion::from_axis_angle((0.0, 1.0, 0.0).into(), cgmath::Deg(0.2))
                 * old_position)
                 .into();
         self.queue.write_buffer(&self.light_buffer, 0, bytemuck::cast_slice(&[self.light_uniform]));

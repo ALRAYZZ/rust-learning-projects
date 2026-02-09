@@ -2,10 +2,15 @@
 // A struct in a shader tells the GPU: For every instances i draw, look at the current memory address
 // and extract these four vectors
 struct InstanceInput {
+    // Model matrix is 4x4, but WGPU cant handle mat4x4 as input, so we split it into 4 vec4s and reconstruct it in the shader
     @location(5) model_matrix_0: vec4<f32>,
     @location(6) model_matrix_1: vec4<f32>,
     @location(7) model_matrix_2: vec4<f32>,
     @location(8) model_matrix_3: vec4<f32>,
+    // Normal matrix
+    @location(9) normal_matrix_0: vec3<f32>,
+    @location(10) normal_matrix_1: vec3<f32>,
+    @location(11) normal_matrix_2: vec3<f32>,
 }
 
 struct RenderModeUniform {
@@ -71,10 +76,17 @@ fn vs_main(
         instance.model_matrix_2,
         instance.model_matrix_3,
     );
+    // Reconstruction normal matrix
+    let normal_matrix = mat3x3<f32>(
+        instance.normal_matrix_0,
+        instance.normal_matrix_1,
+        instance.normal_matrix_2,
+    );
+
     var out: VertexOutput;
     // Passing data from vertex shader to fragment shader so it can do texturing and lighting calculations
     out.tex_coords = model.tex_coords;
-    out.world_normal = model.normal;
+    out.world_normal = normal_matrix * model.normal; // Transforming normal to world space using normal matrix
 
     // Converting to World Space (Model position is relative to itself, bringing model matrix moves vertex to the world)
     var world_position: vec4<f32> = model_matrix * vec4<f32>(model.position, 1.0);
@@ -109,13 +121,16 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     // normal textured rendering
     let object_color: vec4<f32> = textureSample(t_diffuse, s_diffuse, in.tex_coords);
 
+    let N = normalize(in.world_normal);
+
     // Simple ambient light
     let ambient_strenght = 0.1;
     let ambient_color = light.color * ambient_strenght;
 
     // Diffuse light
     let light_dir = normalize(light.position - in.world_position);
-    let diffuse_strenght = max(dot(in.world_normal, light_dir), 0.0);
+
+    let diffuse_strenght = max(dot(N, light_dir), 0.0);
     let diffuse_color = light.color * diffuse_strenght;
 
     let result = (ambient_color + diffuse_color) * object_color.xyz;
