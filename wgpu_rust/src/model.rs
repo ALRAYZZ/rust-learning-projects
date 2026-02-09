@@ -211,6 +211,9 @@ pub struct ModelVertex {
     pub normal: [f32; 3],
 }
 
+// Send vertex data to GPU, this represents a single vertex in our model,
+// with its position, texture coordinates, and normal vector
+// The desc method tells the GPU how to interpret the vertex data in the buffer
 impl Vertex for ModelVertex {
     fn desc() -> VertexBufferLayout<'static> {
         VertexBufferLayout {
