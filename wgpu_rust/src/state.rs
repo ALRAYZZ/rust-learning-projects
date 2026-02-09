@@ -209,13 +209,18 @@ impl State {
         // mapping over X and Z axis to create rows and columns
         let instances = (0..NUM_INSTANCES_PER_ROW).flat_map(|z| {
             (0..NUM_INSTANCES_PER_ROW).map(move |x| {
-                let x = SPACE_BETWEEN * (x as f32 - NUM_INSTANCES_PER_ROW as f32 / 2.0);
-                let z = SPACE_BETWEEN * (z as f32 - NUM_INSTANCES_PER_ROW as f32 / 2.0);
+                let x_pos = SPACE_BETWEEN * (x as f32 - NUM_INSTANCES_PER_ROW as f32 / 2.0);
+                let z_pos = SPACE_BETWEEN * (z as f32 - NUM_INSTANCES_PER_ROW as f32 / 2.0);
 
-                let position = cgmath::Vector3 { x, y: 0.0, z };
+                let position = cgmath::Vector3 {x: x_pos, y: 0.0, z: z_pos};
 
                 let rotation = cgmath::Quaternion::from_axis_angle(
-                    (0.0, 1.0, 0.0).into(), cgmath::Deg(180.0)
+                    cgmath::Vector3::new(
+                        (x as f32 * 1.12).sin(),
+                        (z as f32 * 1.55).cos().abs() + 0.1,
+                        ((x + z) as f32 * 0.3).sin()
+                    ).normalize(),
+                    cgmath::Deg(((x * 30 + z * 50) % 360) as f32)
                 );
 
                 Instance {

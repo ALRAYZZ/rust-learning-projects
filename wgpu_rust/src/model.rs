@@ -87,7 +87,7 @@ where
         self.set_index_buffer(mesh.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
         self.set_bind_group(0, &material.bind_group, &[]);
         self.set_bind_group(1, camera_bind_group, &[]);
-        // Skip bindings on 3 and 4. Done on state.rs set globally
+        // Skip bindings on 2 and 3. Done on state.rs set globally
         self.set_bind_group(4, light_bind_group, &[]);
         self.draw_indexed(0..mesh.num_elements, 0, instances);
     }
@@ -217,6 +217,7 @@ impl Vertex for ModelVertex {
             array_stride: size_of::<ModelVertex>() as wgpu::BufferAddress,
             step_mode: wgpu::VertexStepMode::Vertex,
             attributes: &[
+                // offsets gotta match the order of fields and sizes in the ModelVertex struct
                 wgpu::VertexAttribute {
                     offset: 0,
                     shader_location: 0,
@@ -228,7 +229,7 @@ impl Vertex for ModelVertex {
                     format: wgpu::VertexFormat::Float32x2,
                 },
                 wgpu::VertexAttribute {
-                    offset: size_of::<[f32; 3]>() as wgpu::BufferAddress,
+                    offset: size_of::<[f32; 5]>() as wgpu::BufferAddress,
                     shader_location: 2,
                     format: wgpu::VertexFormat::Float32x3,
                 },

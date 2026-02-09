@@ -1,3 +1,4 @@
+use cgmath::{Matrix, SquareMatrix};
 use crate::model;
 
 // This module allows instancing, which is rendering multiple copies of the same object with different transformations
@@ -28,9 +29,11 @@ impl Instance {
     // Instead we give it a single model matrix that combines all transformations (Model Matrix = Translation * Rotation * Scale)
     // Then we need to translate our cgmath types into raw arrays of f32 that GPU understands
     pub fn to_raw(&self) -> InstanceRaw {
+        let model_matrix = cgmath::Matrix4::from_translation(self.position) *
+            cgmath::Matrix4::from(self.rotation);
+
         InstanceRaw {
-            model: (cgmath::Matrix4::from_translation(self.position) *
-                cgmath::Matrix4::from(self.rotation)).into(),
+            model: model_matrix.into(),
             normal: cgmath::Matrix3::from(self.rotation).into(),
         }
     }
