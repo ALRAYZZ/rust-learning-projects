@@ -33,8 +33,6 @@ pub struct State {
     pub(crate) window: Arc<Window>,
     render_pipeline: wgpu::RenderPipeline,
 
-    diffuse_bind_group: wgpu::BindGroup,
-    diffuse_texture: texture::Texture,
     diffuse_bind_group_layout: wgpu::BindGroupLayout,
 
     camera: camera::Camera,
@@ -133,8 +131,6 @@ impl State {
             desired_maximum_frame_latency: 2,
         };
 
-        // Load image into RAM
-        let diffuse_bytes = include_bytes!("../assets/happy-tree.png");
 
         // Create bind group layout
         let diffuse_bind_group_layout =
@@ -142,25 +138,6 @@ impl State {
 
         let depth_texture_bind_group_layout =
             texture::create_depth_bind_group_layout(&device);
-
-        // Helper method to transform image bytes into Texture object in GPU memory
-        // Textures are not only image data, but is a combination of:
-        // The raw pixel data in VRAM - the usage of that data (sampling in shaders)
-        // and the instructions on how to look at that data ("lens" and "projector settings")
-        let diffuse_texture = texture::Texture::from_bytes(
-            &device,
-            &queue,
-            diffuse_bytes,
-            "happy-tree.png",
-        )?;
-
-        // Create bind group from texture
-        let diffuse_bind_group =
-            texture::create_bind_group_from_texture(
-                &device,
-                &diffuse_bind_group_layout,
-                &diffuse_texture,
-            );
 
         // Create camera with config
         let camera = camera::Camera::new(camera::CameraConfig {
@@ -380,9 +357,7 @@ impl State {
             window,
             clear_color,
             render_pipeline,
-            diffuse_bind_group,
             diffuse_bind_group_layout,
-            diffuse_texture,
             camera,
             camera_uniform,
             camera_buffer,

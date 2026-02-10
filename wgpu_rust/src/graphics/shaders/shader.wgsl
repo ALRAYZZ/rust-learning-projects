@@ -99,10 +99,15 @@ fn vs_main(
 }
 
 // Fragment shader (coloring) fragment shaders runs per pixel
+// Bind group created on model.rs with new constructor
 @group(0) @binding(0)
 var t_diffuse: texture_2d<f32>; // 2D texture bound to group 0 binding 0
 @group(0) @binding(1)
 var s_diffuse: sampler; // Sampler bound to group 0 binding 1
+@group(0) @binding(2)
+var t_normal: texture_2d<f32>; // Normal map texture
+@group(0) @binding(3)
+var s_normal: sampler;
 
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
@@ -121,6 +126,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
 
     // normal textured rendering
     let object_color: vec4<f32> = textureSample(t_diffuse, s_diffuse, in.tex_coords);
+    let object_normal: vec4<f32> = textureSample(t_normal, s_normal, in.tex_coords);
 
     let N = normalize(in.world_normal);
 
@@ -128,17 +134,20 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let ambient_strenght = 0.1;
     let ambient_color = light.color * ambient_strenght;
 
+    // Normal maps are usually stored in [0,1] range, but we need them in [-1,1] for lighting calculations
+    let tangent_normal = object_normal.xyz * 2.0 - 1.0; // Convert from [0,1] to [-1,1]
+
     // Diffuse light
     let light_dir = normalize(light.position - in.world_position);
 
-    let diffuse_strenght = max(dot(N, light_dir), 0.0);
+    let diffuse_strenght = max(dot(tangent_normal, light_dir), 0.0);
     let diffuse_color = light.color * diffuse_strenght;
 
     // Specular light
     let view_dir = normalize(camera.view_pos.xyz - in.world_position);
     let half_dir = normalize(view_dir + light_dir);
 
-    let specular_strength = pow(max(dot(N, half_dir), 0.0), 32.0);
+    let specular_strength = pow(max(dot(tangent_normal, half_dir), 0.0), 32.0);
     let specular_color = light.color * specular_strength;
 
     let result = (ambient_color + diffuse_color + specular_color) * object_color.xyz;

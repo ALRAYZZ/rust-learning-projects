@@ -64,14 +64,16 @@ pub async fn load_model(
     // Create materials from the loaded obj materials
     for m in obj_materials? {
         let diffuse_texture = load_texture(&m.diffuse_texture, device, queue).await?;
-        let bind_group = texture::create_bind_group_from_texture(&device, layout, &diffuse_texture);
+        let normal_texture = load_texture(&m.normal_texture, device, queue).await?;
 
         // Store the material we got from the obj file into the Rust Material struct
-        materials.push(model::Material {
-            name: m.name,
+        materials.push(model::Material::new(
+            device,
+            &m.name,
             diffuse_texture,
-            bind_group,
-        })
+            normal_texture,
+            layout,
+        ));
     }
 
     // Save every mesh in the model along with its buffers and material
