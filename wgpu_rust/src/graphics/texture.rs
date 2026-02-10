@@ -14,9 +14,10 @@ impl Texture {
         queue: &wgpu::Queue,
         bytes: &[u8],
         label: &str,
+        is_normal_map: bool,
     ) -> Result<Self> {
         let img = image::load_from_memory(bytes)?;
-        Self::from_image(device, queue, &img, Some(label))
+        Self::from_image(device, queue, &img, Some(label), is_normal_map)
     }
 
     pub fn from_image(
@@ -24,6 +25,7 @@ impl Texture {
         queue: &wgpu::Queue,
         img: &image::DynamicImage,
         label: Option<&str>,
+        is_normal_map: bool,
     ) -> Result<Self> {
         let rgba = img.to_rgba8();
         let dimensions = img.dimensions();
@@ -34,6 +36,12 @@ impl Texture {
             height: dimensions.1,
             depth_or_array_layers: 1,
         };
+        let format = if is_normal_map {
+            wgpu::TextureFormat::Rgba8Unorm
+        } else {
+            wgpu::TextureFormat::Rgba8UnormSrgb
+        };
+
         // GPU command to allocate memory for the texture based on size and format
         let texture = device.create_texture(
             &wgpu::TextureDescriptor {
@@ -42,11 +50,12 @@ impl Texture {
                 mip_level_count: 1,
                 sample_count: 1,
                 dimension: wgpu::TextureDimension::D2,
-                format: wgpu::TextureFormat::Rgba8UnormSrgb,
+                format,
                 usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
                 view_formats: &[],
             }
         );
+
 
         // Actual command to move diffuse_rgba bytes from RAM to GPU memory over PCIe bus
         // We use a queue because we cannot send commands directly to GPU, when GPU is ready
@@ -246,7 +255,8 @@ pub fn load_texture_from_bytes(
     queue: &wgpu::Queue,
     bind_group_layout: &wgpu::BindGroupLayout,
     bytes: &[u8],
+    is_normal_map: bool,
 ) -> Result<wgpu::BindGroup> {
-    let texture = Texture::from_bytes(device, queue, bytes, "load_texture")?;
+    let texture = Texture::from_bytes(device, queue, bytes, "load_texture", is_normal_map)?;
     Ok(create_bind_group_from_texture(device, bind_group_layout, &texture))
 }

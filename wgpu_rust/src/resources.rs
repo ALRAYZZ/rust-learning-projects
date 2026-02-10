@@ -31,9 +31,10 @@ pub async fn load_texture(
     file_name: &str,
     device: &wgpu::Device,
     queue: &wgpu::Queue,
+    is_normal_map: bool,
 ) -> anyhow::Result<texture::Texture> {
     let data = load_binary(file_name).await?;
-    texture::Texture::from_bytes(device, queue, &data, file_name)
+    texture::Texture::from_bytes(device, queue, &data, file_name, is_normal_map)
 }
 
 pub async fn load_model(
@@ -63,8 +64,8 @@ pub async fn load_model(
     let mut materials = Vec::new();
     // Create materials from the loaded obj materials
     for m in obj_materials? {
-        let diffuse_texture = load_texture(&m.diffuse_texture, device, queue).await?;
-        let normal_texture = load_texture(&m.normal_texture, device, queue).await?;
+        let diffuse_texture = load_texture(&m.diffuse_texture, device, queue, false).await?;
+        let normal_texture = load_texture(&m.normal_texture, device, queue, true).await?;
 
         // Store the material we got from the obj file into the Rust Material struct
         materials.push(model::Material::new(
