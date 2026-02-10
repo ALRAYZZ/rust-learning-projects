@@ -310,7 +310,7 @@ impl State {
                 &layout,
                 config.format,
                 Some(texture::Texture::DEPTH_FORMAT),
-                &[vertex::Vertex::desc()],
+                &[model::ModelVertex::desc()],
                 shader,
             )
         };

@@ -80,36 +80,84 @@ pub async fn load_model(
     let meshes = models
         .into_iter()
         .map(|m| {
-            let vertices = (0..m.mesh.positions.len() / 3)
-                .map(|i| {
-                    // If model not have normals, set them to 0.0
-                    if m.mesh.normals.is_empty(){
-                        model::ModelVertex {
-                            position: [
-                                m.mesh.positions[i * 3],
-                                m.mesh.positions[i * 3 + 1],
-                                m.mesh.positions[i * 3 + 2],
-                            ],
-                            tex_coords: [m.mesh.texcoords[i * 2], 1.0 - m.mesh.texcoords[i * 2 + 1]],
-                            normal: [0.0, 0.0, 0.0],
-                        }
-                    } else {
-                        model::ModelVertex {
-                            position: [
-                                m.mesh.positions[i * 3],
-                                m.mesh.positions[i * 3 + 1],
-                                m.mesh.positions[i * 3 + 2],
-                            ],
-                            tex_coords: [m.mesh.texcoords[i * 2], 1.0 - m.mesh.texcoords[i * 2 + 1]],
-                            normal: [
-                                m.mesh.normals[i * 3],
-                                m.mesh.normals[i * 3 + 1],
-                                m.mesh.normals[i * 3 + 2],
-                            ],
-                        }
-                    }
+            let mut vertices = (0..m.mesh.positions.len() / 3)
+                .map(|i| model::ModelVertex {
+                    position: [
+                        m.mesh.positions[i * 3],
+                        m.mesh.positions[i * 3 + 1],
+                        m.mesh.positions[i * 3 + 2],
+                    ],
+                    tex_coords: [m.mesh.texcoords[i * 2], 1.0 - m.mesh.texcoords[i * 2 + 1]],
+                    normal: [
+                        m.mesh.normals[i * 3],
+                        m.mesh.normals[i * 3 + 1],
+                        m.mesh.normals[i * 3 + 2],
+                    ],
+                    tangent: [0.0; 3],
+                    bitangent: [0.0; 3],
                 })
                 .collect::<Vec<_>>();
+
+            let indices = &m.mesh.indices;
+            let mut triangles_included = vec![0; vertices.len()];
+
+            // Calculate tangents and bitangents.
+            // Going to use triangles. We loop through the indicies in chunks of 3
+            for c in indices.chunks(3) {
+                let v0 = vertices[c[0] as usize];
+                let v1 = vertices[c[1] as usize];
+                let v2 = vertices[c[2] as usize];
+
+                let pos0: cgmath::Vector3<_> = v0.position.into();
+                let pos1: cgmath::Vector3<_> = v1.position.into();
+                let pos2: cgmath::Vector3<_> = v2.position.into();
+
+                let uv0: cgmath::Vector2<_> = v0.tex_coords.into();
+                let uv1: cgmath::Vector2<_> = v1.tex_coords.into();
+                let uv2: cgmath::Vector2<_> = v2.tex_coords.into();
+
+                // Calculate edges of triangle
+                let delta_pos1 = pos1 - pos0;
+                let delta_pos2 = pos2 - pos0;
+
+                // This gives direction to calculate the tangent and bitangent
+                let delta_uv1 = uv1 - uv0;
+                let delta_uv2 = uv2 - uv0;
+
+                let r = 1.0 / (delta_uv1.x * delta_uv2.y - delta_uv1.y * delta_uv2.x);
+                let tangent = (delta_pos1 * delta_uv2.y - delta_pos2 * delta_uv1.y) * r;
+
+                // Flip the bitangent to enable right-handed normal maps with wgpu's coordinate system
+                let bitangent = (delta_pos2 * delta_uv1.x - delta_pos1 * delta_uv2.x) * -r;
+
+                // We will use the same tangent/bitangent for each vertex in triangle
+                vertices[c[0] as usize].tangent =
+                    (tangent + cgmath::Vector3::from(vertices[c[0] as usize].tangent)).into();
+                vertices[c[1] as usize].tangent =
+                    (tangent + cgmath::Vector3::from(vertices[c[1] as usize].tangent)).into();
+                vertices[c[2] as usize].tangent =
+                    (tangent + cgmath::Vector3::from(vertices[c[2] as usize].tangent)).into();
+                vertices[c[0] as usize].bitangent =
+                    (bitangent + cgmath::Vector3::from(vertices[c[0] as usize].bitangent)).into();
+                vertices[c[1] as usize].bitangent =
+                    (bitangent + cgmath::Vector3::from(vertices[c[1] as usize].bitangent)).into();
+                vertices[c[2] as usize].bitangent =
+                    (bitangent + cgmath::Vector3::from(vertices[c[2] as usize].bitangent)).into();
+
+
+                // Used to average tangents and bitangents
+                triangles_included[c[0] as usize] += 1;
+                triangles_included[c[1] as usize] += 1;
+                triangles_included[c[2] as usize] += 1;
+            }
+
+            //  Average tangents and bitangents
+            for (i, n) in triangles_included.into_iter().enumerate() {
+                let denom = 1.0 / n as f32;
+                let mut v = &mut vertices[i];
+                v.tangent = (cgmath::Vector3::from(v.tangent) * denom).into();
+                v.bitangent = (cgmath::Vector3::from(v.bitangent) * denom).into();
+            }
 
             // Create vertex and index buffers for the mesh
             let vertex_buffer = buffers::create_model_vertex_buffer(&device, &vertices);

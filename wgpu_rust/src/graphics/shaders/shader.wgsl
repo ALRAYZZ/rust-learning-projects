@@ -44,6 +44,8 @@ struct VertexInput {
     @location(0) position: vec3<f32>, // Input attribute for vertex position
     @location(1) tex_coords: vec2<f32>,  // Input attribute for texture coordinates
     @location(2) normal: vec3<f32>, // Input attribute for vertex normal (for lighting calculations)
+    @location(3) tangent: vec3<f32>, // Input attribute for vertex tangent (for normal mapping)
+    @location(4) bitangent: vec3<f32>, // Input attribute for vertex bitangent (for normal mapping)
 }
 
 // Data into rasterizer and fragment shader
@@ -53,8 +55,9 @@ struct VertexOutput {
     // while clip space is normalized device coordinates where (-1,-1) is bottom-left
     @builtin(position) clip_position: vec4<f32>, // Tells GPU about clip space position of vertex
     @location(0) tex_coords: vec2<f32>, // Pass texture coordinates to fragment shader
-    @location(1) world_normal: vec3<f32>, // Pass normal to fragment shader for lighting calculations
-    @location(2) world_position: vec3<f32>, // Pass world position to fragment shader for lighting calculations
+    @location(1) tangent_position: vec3<f32>,
+    @location(2) tangent_light_position: vec3<f32>,
+    @location(3) tangent_view_position: vec3<f32>,
 };
 
 // Need the light position data in this shader to actually do light calculations based on its position and color
@@ -84,17 +87,29 @@ fn vs_main(
         instance.normal_matrix_2,
     );
 
+    // Construct tangent matrix
+    let world_normal = normalize(normal_matrix * model.normal);
+    let world_tangent = normalize(normal_matrix * model.tangent);
+
+    let world_bitangent = normalize(normal_matrix * model.bitangent);
+
+    let tangent_matrix = transpose(mat3x3<f32>(
+        world_tangent,
+        world_bitangent,
+        world_normal,
+    ));
+
+    let world_position = model_matrix * vec4<f32>(model.position, 1.0);
+
     var out: VertexOutput;
-    // Passing data from vertex shader to fragment shader so it can do texturing and lighting calculations
-    out.tex_coords = model.tex_coords;
-    out.world_normal = normal_matrix * model.normal; // Transforming normal to world space using normal matrix
-
-    // Converting to World Space (Model position is relative to itself, bringing model matrix moves vertex to the world)
-    var world_position: vec4<f32> = model_matrix * vec4<f32>(model.position, 1.0);
-    out.world_position = world_position.xyz;
-
     // Converting to Clip Space (this is where the Camera happens)
     out.clip_position = camera.view_proj * world_position;
+    // Passing data from vertex shader to fragment shader so it can do texturing and lighting calculations
+    out.tex_coords = model.tex_coords;
+    out.tangent_position = tangent_matrix * world_position.xyz;
+    out.tangent_view_position = tangent_matrix * camera.view_pos.xyz;
+    out.tangent_light_position = tangent_matrix * light.position;
+
     return out;
 }
 
@@ -124,33 +139,28 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
             return vec4<f32>(vec3<f32>(visualize * 100.0), 1.0);
     }
 
-    // normal textured rendering
     let object_color: vec4<f32> = textureSample(t_diffuse, s_diffuse, in.tex_coords);
     let object_normal: vec4<f32> = textureSample(t_normal, s_normal, in.tex_coords);
 
-    let N = normalize(in.world_normal);
+    // Use pre-computed tangent-space positions from vertex shader
+    let tangent_normal = normalize(object_normal.xyz * 2.0 - 1.0);
 
-    // Simple ambient light
-    let ambient_strenght = 0.1;
-    let ambient_color = light.color * ambient_strenght;
+    let light_dir = normalize(in.tangent_light_position - in.tangent_position);
+    let view_dir = normalize(in.tangent_view_position - in.tangent_position);
 
-    // Normal maps are usually stored in [0,1] range, but we need them in [-1,1] for lighting calculations
-    let tangent_normal = object_normal.xyz * 2.0 - 1.0; // Convert from [0,1] to [-1,1]
+    // Ambient
+    let ambient_strength = 0.1;
+    let ambient_color = light.color * ambient_strength;
 
-    // Diffuse light
-    let light_dir = normalize(light.position - in.world_position);
+    // Diffuse
+    let diffuse_strength = max(dot(tangent_normal, light_dir), 0.0);
+    let diffuse_color = light.color * diffuse_strength;
 
-    let diffuse_strenght = max(dot(tangent_normal, light_dir), 0.0);
-    let diffuse_color = light.color * diffuse_strenght;
-
-    // Specular light
-    let view_dir = normalize(camera.view_pos.xyz - in.world_position);
-    let half_dir = normalize(view_dir + light_dir);
-
+    // Specular
+    let half_dir = normalize(light_dir + view_dir);
     let specular_strength = pow(max(dot(tangent_normal, half_dir), 0.0), 32.0);
     let specular_color = light.color * specular_strength;
 
     let result = (ambient_color + diffuse_color + specular_color) * object_color.xyz;
-
     return vec4<f32>(result, object_color.a);
 }
