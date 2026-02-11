@@ -113,6 +113,7 @@ impl ApplicationHandler<State> for App {
             WindowEvent::MouseWheel { delta, .. } => {
                 state.camera_controller.handle_mouse_scroll(&delta);
             }
+            // Tracks if user is holding down the left mouse button for use (e.g., dragging to rotate camera)
             WindowEvent::MouseInput {
                 button: MouseButton::Left,
                 state: mouse_state,
@@ -121,6 +122,25 @@ impl ApplicationHandler<State> for App {
                 state.mouse_pressed = mouse_state == ElementState::Pressed;
             }
             _ => {}
+        }
+    }
+
+    fn device_event(
+        &mut self,
+        _event_loop: &ActiveEventLoop,
+        _device_id: winit::event::DeviceId,
+        event: DeviceEvent,
+    ) {
+        let state = match &mut self.state {
+            Some(state) => state,
+            None => return,
+        };
+
+        // Handles camera rotation only if mouse is moved and button pressed
+        if let DeviceEvent::MouseMotion { delta } = event {
+            if state.mouse_pressed {
+                state.camera_controller.handle_mouse(delta.0, delta.1);
+            }
         }
     }
 }
