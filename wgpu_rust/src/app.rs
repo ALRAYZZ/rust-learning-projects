@@ -1,4 +1,5 @@
 use std::sync::Arc;
+use instant::Instant;
 use winit::{
     application::ApplicationHandler, event::*, event_loop::{ActiveEventLoop},
     keyboard::PhysicalKey, window::Window
@@ -12,12 +13,14 @@ use crate::input::InputAction;
 // Does not care about rendering, but that there is a window to render to
 pub struct App {
     state: Option<State>,
+    last_render_time: Option<Instant>,
 }
 
 impl App  {
     pub fn new() -> Self {
         Self {
             state: None,
+            last_render_time: None,
         }
     }
 }
@@ -36,6 +39,9 @@ impl ApplicationHandler<State> for App {
 
         // If we are not on web use pollster
         self.state = Some(pollster::block_on(State::new(window)).unwrap());
+
+        // Initialize last_render_time when the app is resumed
+        self.last_render_time = Some(Instant::now());
     }
 
     // Handle window events like resize, close, redraw, keyboard input
@@ -46,7 +52,7 @@ impl ApplicationHandler<State> for App {
         _window_id: winit::window::WindowId,
         event: WindowEvent,
     ) {
-        let state = match &mut self.state {
+        let mut state = match &mut self.state {
             Some(canvas) => canvas,
             None => return,
         };
@@ -55,7 +61,11 @@ impl ApplicationHandler<State> for App {
             WindowEvent::CloseRequested => event_loop.exit(),
             WindowEvent::Resized(size) => state.resize(size.width, size.height),
             WindowEvent::RedrawRequested => {
-                state.update();
+                let now = std::time::Instant::now();
+                let dt = now - self.last_render_time.unwrap_or(now);
+                self.last_render_time = Some(now);
+
+                state.update(dt);
                 match state.render() {
                     Ok(_) => {}
                     // Reconfigure surface if lost
@@ -87,7 +97,9 @@ impl ApplicationHandler<State> for App {
                 },
                 ..
             } => {
-                let is_pressed = key_state.is_pressed();
+                // Handle camera movement input
+                state.camera_controller.handle_key(code, key_state);
+
                 // Handle application-level input
                 let action = InputHandler::handle_key(event_loop, code, key_state.is_pressed());
                 match action {
@@ -96,9 +108,17 @@ impl ApplicationHandler<State> for App {
                     InputAction::Exit => event_loop.exit(),
                     _ => {}
                 }
-                
-                // Handle camera movement input
-                state.camera_controller.handle_key(code, is_pressed);
+
+            }
+            WindowEvent::MouseWheel { delta, .. } => {
+                state.camera_controller.handle_mouse_scroll(&delta);
+            }
+            WindowEvent::MouseInput {
+                button: MouseButton::Left,
+                state: mouse_state,
+                ..
+            } => {
+                state.mouse_pressed = mouse_state == ElementState::Pressed;
             }
             _ => {}
         }

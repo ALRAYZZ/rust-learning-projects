@@ -1,5 +1,6 @@
 use crate::model::{DrawLight, Vertex};
 use std::sync::Arc;
+use std::time::Duration;
 use cgmath::{InnerSpace, Rotation3, Zero};
 use winit::window::Window;
 use crate::graphics::{vertex, pipeline, texture, camera, buffers, light};
@@ -36,10 +37,12 @@ pub struct State {
     diffuse_bind_group_layout: wgpu::BindGroupLayout,
 
     camera: camera::Camera,
+    projection: camera::Projection,
+    pub(crate) camera_controller: CameraController,
+
     camera_uniform: CameraUniform,
     camera_buffer: wgpu::Buffer,
     camera_bind_group: wgpu::BindGroup,
-    pub(crate) camera_controller: CameraController,
 
     instances: Vec<Instance>,
     instance_buffer: wgpu::Buffer,
@@ -61,6 +64,8 @@ pub struct State {
     light_bind_group: wgpu::BindGroup,
 
     light_render_pipeline: wgpu::RenderPipeline,
+
+    pub(crate) mouse_pressed: bool,
 }
 
 const NUM_INSTANCES_PER_ROW: u32 = 10;
@@ -140,22 +145,15 @@ impl State {
             texture::create_depth_bind_group_layout(&device);
 
         // Create camera with config
-        let camera = camera::Camera::new(camera::CameraConfig {
-            // Eye is camera position in world space
-            eye: (0.0, 1.0, 2.0).into(),
-            // Where the camera is looking at
-            target: (0.0, 0.0, 0.0).into(),
-            // Which direction is up for the camera
-            up: cgmath::Vector3::unit_y(),
-            aspect: config.width as f32 / config.height as f32,
-            fovy: 45.0,
-            znear: 0.1,
-            zfar: 100.0,
-        });
+        let camera = camera::Camera::new((0.0, 5.0, 10.0), cgmath::Deg(-90.0),
+                            cgmath::Deg(-20.0));
+        let projection = camera::Projection::new(config.width, config.height, cgmath::Deg(45.0), 0.1, 100.0);
+
+        let camera_controller = CameraController::new(4.0, 0.4);
 
         // Create camera uniform and update with camera data (The data)
         let mut camera_uniform = CameraUniform::new();
-        camera_uniform.update_view_proj(&camera);
+        camera_uniform.update_view_proj(&camera, &projection);
 
         // Create uniform buffer(GPU) for camera (The container)
         let camera_buffer = buffers::create_uniform_buffer(&device, &camera_uniform);
@@ -178,7 +176,6 @@ impl State {
             );
 
         // Create controls for the camera with a given speed
-        let camera_controller = CameraController::new(0.1);
 
         const SPACE_BETWEEN: f32 = 3.0;
 
@@ -359,10 +356,11 @@ impl State {
             render_pipeline,
             diffuse_bind_group_layout,
             camera,
+            projection,
+            camera_controller,
             camera_uniform,
             camera_buffer,
             camera_bind_group,
-            camera_controller,
             instances,
             instance_buffer,
             depth_texture,
@@ -378,6 +376,7 @@ impl State {
             light_bind_group_layout,
             light_bind_group,
             light_render_pipeline,
+            mouse_pressed: false,
         })
     }
 
@@ -389,6 +388,7 @@ impl State {
         if width > 0 && height > 0 {
             self.config.width = width;
             self.config.height = height;
+            self.projection.resize(width, height);
             self.surface.configure(&self.device, &self.config);
             self.is_surface_configured = true;
             // Recreate depth texture for new size
@@ -445,16 +445,16 @@ impl State {
         &self.window
     }
 
-    pub fn update(&mut self) {
+    pub fn update(&mut self, dt: Duration) {
         // Camera update
-        self.camera_controller.update_camera(&mut self.camera);
-        self.camera_uniform.update_view_proj(&self.camera);
+        self.camera_controller.update_camera(&mut self.camera, dt);
+        self.camera_uniform.update_view_proj(&self.camera, &self.projection);
         self.queue.write_buffer(&self.camera_buffer, 0, bytemuck::cast_slice(&[self.camera_uniform]));
 
         // Light Position update
         let old_position: cgmath::Vector3<_> = self.light_uniform.position.into();
         self.light_uniform.position =
-            (cgmath::Quaternion::from_axis_angle((0.0, 1.0, 0.0).into(), cgmath::Deg(0.2))
+            (cgmath::Quaternion::from_axis_angle((0.0, 1.0, 0.0).into(), cgmath::Deg(60.0 * dt.as_secs_f32()))
                 * old_position)
                 .into();
         self.queue.write_buffer(&self.light_buffer, 0, bytemuck::cast_slice(&[self.light_uniform]));

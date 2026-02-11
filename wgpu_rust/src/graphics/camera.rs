@@ -1,3 +1,7 @@
+use std::f32::consts::FRAC_PI_2;
+use cgmath::{perspective, InnerSpace, Matrix4, Point3, Rad, Vector3};
+use crate::graphics::camera;
+
 // Conversion matrix from OpenGL to WGPU coordinate system
 // OpenGL (cgmath) Z axis ranges from -1 to 1
 // WGPU (DirectX/Vulkan/Metal) Z axis ranges from 0 to 1
@@ -9,6 +13,8 @@ pub const OPENGL_TO_WGPU_MATRIX: cgmath::Matrix4<f32> = cgmath::Matrix4::from_co
     cgmath::Vector4::new(0.0, 0.0, 0.5, 0.0),
     cgmath::Vector4::new(0.0, 0.0, 0.5, 1.0),
 );
+
+
 pub struct CameraConfig {
     pub eye: cgmath::Point3<f32>,
     pub target: cgmath::Point3<f32>,
@@ -20,55 +26,78 @@ pub struct CameraConfig {
 }
 
 pub struct Camera {
-    pub eye: cgmath::Point3<f32>,
-    pub target: cgmath::Point3<f32>,
-    pub up: cgmath::Vector3<f32>,
-    pub aspect: f32,
-    pub fovy: f32,
-    pub znear: f32,
-    pub zfar: f32,
+    pub position: Point3<f32>,
+    pub(crate) yaw: Rad<f32>,
+    pub(crate) pitch: Rad<f32>,
 }
 
 
 impl Camera {
-    pub fn new(config: CameraConfig) -> Self {
+    pub fn new<
+        V: Into<Point3<f32>>,
+        Y: Into<Rad<f32>>,
+        P: Into<Rad<f32>>,
+    >(
+        position: V,
+        yaw: Y,
+        pitch: P,
+    ) -> Self {
         Self {
-            eye: config.eye,
-            target: config.target,
-            up: config.up,
-            aspect: config.aspect,
-            fovy: config.fovy,
-            znear: config.znear,
-            zfar: config.zfar,
+            position: position.into(),
+            yaw: yaw.into(),
+            pitch: pitch.into()
         }
     }
 
-    // Setters/getters (Not used since fields are public)
-    pub fn get_target(&self) -> cgmath::Point3<f32> {
-        self.target
-    }
+    pub fn calc_matrix(&self) -> Matrix4<f32> {
+        let (sin_pitch, cos_pitch) = self.pitch.0.sin_cos();
+        let (sin_yaw, cos_yaw) = self.yaw.0.sin_cos();
 
-    pub fn get_eye(&self) -> cgmath::Point3<f32> {
-        self.eye
-    }
-
-    fn build_view_projection_matrix(&self) -> cgmath::Matrix4<f32> {
-
-        // GPUs dont actually move the camera, instead we move and rotate the entire scene inversely to simulate camera movement
-        // the view matrix offsets every vertex so that they are relative to the camera position and orientation
-        let view = cgmath::Matrix4::look_at_rh(self.eye, self.target, self.up);
-
-        // The projection matrix defines how 3D points are projected onto the 2D screen
-        // making farther objects appear smaller to create depth perception X and Y divided by Z
-        let proj = cgmath::perspective(
-            cgmath::Deg(self.fovy),
-            self.aspect,
-            self.znear,
-            self.zfar,
-        );
-        return OPENGL_TO_WGPU_MATRIX * proj * view;
+        Matrix4::look_to_rh(
+            self.position,
+            Vector3::new(
+                cos_pitch * cos_yaw,
+                sin_pitch,
+                cos_pitch * sin_yaw,
+            ).normalize(),
+            Vector3::unit_y(),
+        )
     }
 }
+
+
+pub struct Projection {
+    aspect: f32,
+    fovy: Rad<f32>,
+    znear: f32,
+    zfar: f32,
+}
+
+impl Projection {
+    pub fn new<F: Into<Rad<f32>>>(
+        width: u32,
+        height: u32,
+        fovy: F,
+        znear: f32,
+        zfar: f32,
+    ) -> Self {
+        Self {
+            aspect: width as f32 / height as f32,
+            fovy: fovy.into(),
+            znear,
+            zfar,
+        }
+    }
+
+    pub fn resize(&mut self, width: u32, height: u32) {
+        self.aspect = width as f32 / height as f32;
+    }
+
+    pub fn calc_matrix(&self) -> Matrix4<f32> {
+        OPENGL_TO_WGPU_MATRIX * perspective(self.fovy, self.aspect, self.znear, self.zfar)
+    }
+}
+
 // Rust by default rearranges struct fields to make it as small as possible in memory
 // This can cause issues when sending data to GPU which expects a specific memory layout
 // So we use #[repr(C)] to tell Rust to use C-style memory layout (no rearranging)
@@ -93,10 +122,9 @@ impl CameraUniform {
         }
     }
 
-    pub fn update_view_proj(&mut self, camera: &Camera) {
-        // Using Vector4 because of the uniforms 16 byte spacing requirements
-        self.view_position = camera.eye.to_homogeneous().into();
-        self.view_proj = camera.build_view_projection_matrix().into();
+    pub fn update_view_proj(&mut self, camera: &Camera, projection: &camera::Projection) {
+        self.view_position = camera.position.to_homogeneous().into();
+        self.view_proj = (projection.calc_matrix() * camera.calc_matrix()).into();
     }
 
     pub fn create_bind_group_layout(device: &wgpu::Device) -> wgpu::BindGroupLayout {

@@ -1,86 +1,124 @@
+use std::f32::consts::FRAC_PI_2;
+use std::time::Duration;
+use cgmath::{InnerSpace, Rad, Vector3};
+use winit::dpi::PhysicalPosition;
+use winit::event::{ElementState, MouseScrollDelta};
 use winit::keyboard::KeyCode;
 use crate::graphics::camera::Camera;
 
+const SAFE_FRAC_PI_2: f32 = FRAC_PI_2 - 0.001;
 pub struct CameraController {
+    amount_left: f32,
+    amount_right: f32,
+    amount_forward: f32,
+    amount_backward: f32,
+    amount_up: f32,
+    amount_down: f32,
+    rotate_horizontal: f32,
+    rotate_vertical: f32,
+    scroll: f32,
     speed: f32,
-    is_forward_pressed: bool,
-    is_backward_pressed: bool,
-    is_left_pressed: bool,
-    is_right_pressed: bool,
+    sensitivity: f32,
 }
 
 impl CameraController {
-    pub fn new(speed: f32) -> Self {
+    pub fn new(speed: f32, sensitivity: f32) -> Self {
         Self {
+            amount_left: 0.0,
+            amount_right: 0.0,
+            amount_forward: 0.0,
+            amount_backward: 0.0,
+            amount_up: 0.0,
+            amount_down: 0.0,
+            rotate_horizontal: 0.0,
+            rotate_vertical: 0.0,
+            scroll: 0.0,
             speed,
-            is_forward_pressed: false,
-            is_backward_pressed: false,
-            is_left_pressed: false,
-            is_right_pressed: false,
+            sensitivity,
         }
     }
 
     // We use booleans so the movement is smooth while key is held down
-    pub fn handle_key(&mut self, code: KeyCode, is_pressed: bool) -> bool {
-        match code {
+    pub fn handle_key(&mut self, key: KeyCode, state: ElementState) -> bool {
+        let amount = if state == ElementState::Pressed { 1.0 } else { 0.0 };
+        match key {
             KeyCode::KeyW | KeyCode::ArrowUp => {
-                self.is_forward_pressed = is_pressed;
-                true
-            }
-            KeyCode::KeyA | KeyCode::ArrowLeft => {
-                self.is_left_pressed = is_pressed;
+                self.amount_forward = amount;
                 true
             }
             KeyCode::KeyS | KeyCode::ArrowDown => {
-                self.is_backward_pressed = is_pressed;
+                self.amount_backward = amount;
+                true
+            }
+            KeyCode::KeyA | KeyCode::ArrowLeft => {
+                self.amount_left = amount;
                 true
             }
             KeyCode::KeyD | KeyCode::ArrowRight => {
-                self.is_right_pressed = is_pressed;
+                self.amount_right = amount;
+                true
+            }
+            KeyCode::Space => {
+                self.amount_up = amount;
+                true
+            }
+            KeyCode::ShiftLeft | KeyCode::ShiftRight => {
+                self.amount_down = amount;
                 true
             }
             _ => false,
         }
     }
 
-    pub fn update_camera(&self, camera: &mut Camera) {
-        use cgmath::InnerSpace;
+    pub fn handle_mouse(&mut self, mouse_dx: f64, mouse_dy: f64) {
+        self.rotate_horizontal = mouse_dx as f32;
+        self.rotate_vertical = mouse_dy as f32;
+    }
 
-        // In 3D if we subtract two points we get a vector pointing from one to the other
-        // So here we get a vector pointing from the camera position to the target position
-        let forward = camera.target - camera.eye;
-        // Normalize the vector so speed is consistent regardless of distance
-        // else moving forward when close to target would be slower than when far away
-        let forward_norm = forward.normalize();
-        let forward_mag = forward.magnitude();
+    pub fn handle_mouse_scroll(&mut self, delta: &MouseScrollDelta) {
+        self.scroll = -match delta {
+            // Line about 100 pixels
+            MouseScrollDelta::LineDelta(_, scroll) => scroll * 100.0,
+            MouseScrollDelta::PixelDelta(PhysicalPosition {
+                y: scroll,
+                ..
+                                         }) => *scroll as f32,
+        };
+    }
 
-        // Prevents glitching when camera gets too close to center scene
-        // If eye and target are the same we cant get a direction to move in
-        // So we only move forward if the distance is greater than speed
-        if self.is_forward_pressed && forward_mag > self.speed {
-            camera.eye += forward_norm * self.speed;
-        }
-        if self.is_backward_pressed {
-            camera.eye -= forward_norm * self.speed;
-        }
+    pub fn update_camera(&mut self, camera: &mut Camera, dt: Duration) {
+        let dt = dt.as_secs_f32();
 
-        // If we do a cross product of two vectors we get a vector perpendicular to both
-        let right = forward_norm.cross(camera.up);
+        // Move forward/backward and left/right
+        let (yaw_sin, yaw_cos) = camera.yaw.0.sin_cos();
+        let forward = Vector3::new(yaw_cos, 0.0, yaw_sin).normalize();
+        let right = Vector3::new(-yaw_sin, 0.0, yaw_cos).normalize();
+        camera.position += forward * (self.amount_forward - self.amount_backward) * self.speed * dt;
+        camera.position += right * (self.amount_right - self.amount_left) * self.speed * dt;
 
-        // Redo radius calc in case fwrd/bckwrd changed it
-        let forward = camera.target - camera.eye;
-        let forward_mag = forward.magnitude();
+        // Move in/out
+        let (pitch_sin, pitch_cos) = camera.pitch.0.sin_cos();
+        let scrollward = Vector3::new(pitch_cos * yaw_cos, pitch_sin, pitch_cos * yaw_sin).normalize();
+        camera.position += scrollward * self.scroll * self.speed * self.sensitivity * dt;
+        self.scroll = 0.0;
 
-        if self.is_right_pressed {
-            // Rescale distance between the target and the eye so
-            // that it does not change. The eye still lies on the circle made by target and eye.
-            // We orbit around the target in the right direction
-            camera.eye = camera.target - (forward + right * self.speed).normalize() * forward_mag;
-        }
-        if self.is_left_pressed {
-            // Orbit around target to the left keeping same distance because
-            // we add left/right vector to the forward vector before normalizing and scaling
-            camera.eye = camera.target - (forward - right * self.speed).normalize() * forward_mag;
+        // Move up/down
+        camera.position.y += (self.amount_up - self.amount_down) * self.speed * dt;
+
+        // Rotate
+        camera.yaw += Rad(self.rotate_horizontal) * self.sensitivity * dt;
+        camera.pitch += Rad(-self.rotate_vertical) * self.sensitivity * dt;
+
+        // If process_mouse is not called every frame
+        // we need to reset the rotation values to prevent continuous rotation
+        self.rotate_horizontal = 0.0;
+        self.rotate_vertical = 0.0;
+
+        // Keep the camera angle from going too high/low
+        if camera.pitch < -Rad(SAFE_FRAC_PI_2) {
+            camera.pitch = -Rad(SAFE_FRAC_PI_2);
+        } else if camera.pitch > Rad(SAFE_FRAC_PI_2) {
+            camera.pitch = Rad(SAFE_FRAC_PI_2);
         }
     }
 }
