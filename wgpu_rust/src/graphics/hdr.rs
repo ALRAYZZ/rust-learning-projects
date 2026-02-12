@@ -60,7 +60,7 @@ impl HdrPipeline {
             entries: &[
                 wgpu::BindGroupEntry {
                     binding: 0,
-                    resource: wgpu::BindingResource::TextureView(&texture.view),
+                    resource: wgpu::BindingResource::TextureView(&texture.texture_view),
                 },
                 wgpu::BindGroupEntry {
                     binding: 1,

@@ -3,11 +3,11 @@ use std::sync::Arc;
 use std::time::Duration;
 use cgmath::{InnerSpace, Rotation3, Zero};
 use winit::window::Window;
-use crate::graphics::{vertex, pipeline, texture, camera, buffers, light};
+use crate::graphics::{vertex, pipeline, texture, camera, buffers, light, hdr};
 use crate::graphics::camera::CameraUniform;
 use crate::graphics::instance::{Instance, InstanceRaw};
 use crate::graphics::camera_controller::CameraController;
-use crate::{model, resources};
+use crate::{graphics, model, resources};
 use crate::graphics::light::LightUniform;
 use crate::graphics::pipeline::create_render_pipeline;
 
@@ -66,6 +66,8 @@ pub struct State {
     light_render_pipeline: wgpu::RenderPipeline,
 
     pub(crate) mouse_pressed: bool,
+
+    hdr: hdr::HdrPipeline,
 }
 
 const NUM_INSTANCES_PER_ROW: u32 = 10;
@@ -268,6 +270,8 @@ impl State {
             }],
         });
 
+        let hdr = hdr::HdrPipeline::new(&device, &config);
+
 
         // Light source creation with position and color
         let light_uniform = LightUniform {
@@ -305,9 +309,10 @@ impl State {
             create_render_pipeline(
                 &device,
                 &layout,
-                config.format,
+                hdr.format(),
                 Some(texture::Texture::DEPTH_FORMAT),
                 &[model::ModelVertex::desc()],
+                wgpu::PrimitiveTopology::TriangleList,
                 shader,
             )
         };
@@ -338,9 +343,10 @@ impl State {
             create_render_pipeline(
                 &device,
                 &render_pipeline_layout,
-                config.format,
+                hdr.format(),
                 Some(texture::Texture::DEPTH_FORMAT),
                 &[model::ModelVertex::desc(), InstanceRaw::desc()],
+                wgpu::PrimitiveTopology::TriangleList,
                 shader,
             )
         };
@@ -377,6 +383,7 @@ impl State {
             light_bind_group,
             light_render_pipeline,
             mouse_pressed: false,
+            hdr,
         })
     }
 
@@ -389,6 +396,7 @@ impl State {
             self.config.width = width;
             self.config.height = height;
             self.projection.resize(width, height);
+            self.hdr.resize(&self.device, width, height);
             self.surface.configure(&self.device, &self.config);
             self.is_surface_configured = true;
             // Recreate depth texture for new size
@@ -489,11 +497,16 @@ impl State {
             let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("Render Pass"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: &view, // specific texture memory to draw to
+                    view: self.hdr.view(), // specific texture memory to draw to
                     resolve_target: None, // anti-aliasing resolve target
                     depth_slice: None, //
                     ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(self.clear_color), // Clear color before drawing
+                        load: wgpu::LoadOp::Clear(wgpu::Color {
+                            r: 0.1,
+                            g: 0.2,
+                            b: 0.3,
+                            a: 1.0,
+                        }), // Clear color before drawing
                         store: wgpu::StoreOp::Store, // Store the result in memory after render pass
                     },
                 })],
@@ -571,6 +584,7 @@ impl State {
             );
         } // Scope ends here, so render_pass is dropped and encoder can be used again
 
+        self.hdr.process(&mut encoder, &view);
 
         // Submit commands to GPU queue for execution
         // Submit will accept anything that implements IntoIterator<Item=&CommandBuffer>
