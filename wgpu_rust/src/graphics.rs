@@ -8,3 +8,4 @@ pub mod camera;
 pub(crate) mod camera_controller;
 pub(crate) mod instance;
 pub mod light;
+mod hdr;
