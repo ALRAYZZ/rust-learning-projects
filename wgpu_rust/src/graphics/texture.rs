@@ -307,6 +307,9 @@ pub fn load_texture_from_bytes(
     Ok(create_bind_group_from_texture(device, bind_group_layout, &texture))
 }
 
+
+// Cube textures are used for environment mapping, skyboxes, and reflections,
+// providing a 360-degree view around a point in space.
 pub struct CubeTexture {
     texture: wgpu::Texture,
     sampler: wgpu::Sampler,
@@ -329,7 +332,7 @@ impl CubeTexture {
             size: wgpu::Extent3d {
                 width,
                 height,
-                depth_or_array_layers: 6, // 6 layers for cube map
+                depth_or_array_layers: 6, // 6 layers for cube map, 360 degrees view
             },
             mip_level_count,
             sample_count: 1,
@@ -341,12 +344,14 @@ impl CubeTexture {
 
         let view = texture.create_view(&wgpu::TextureViewDescriptor {
             label,
+            // telling shader to treat this as a cube map, not a regular 2D texture
             dimension: Some(wgpu::TextureViewDimension::Cube),
             ..Default::default()
         });
 
         let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
             label,
+            // clamping makes seams between cube faces less visible by blending edge pixels
             address_mode_u: wgpu::AddressMode::ClampToEdge,
             address_mode_v: wgpu::AddressMode::ClampToEdge,
             address_mode_w: wgpu::AddressMode::ClampToEdge,
