@@ -29,7 +29,12 @@ impl State {
 
     fn verify_and_apply_transaction(&mut self, tx: Transaction) -> Result<(), String> {
         // Create message that was signed (amount + receiver)
+        // FRAGILE, ambiguity, amount = 12, reciever = 3 -> "123" as amount = 1, receiver = 23 -> "123"
+        // We need canonicalization, or better yet, a structured message format (e.g. JSON, protobuf)
         let message = format!("{}{}", tx.amount, tx.receiver_name);
+
+        // Also receiver should have same addressing system as the ledger.
+        // Receiver should be VerifyingKey or at least a hash of it, not a free-form string.
 
         // Cryptographic Check: Did sender sign this?
         tx.sender_public_key
