@@ -7,6 +7,8 @@ struct Transaction {
     sender_public_key: VerifyingKey,
     receiver_name: String,
     amount: u64,
+    // Only private key-holder can produce signature, anyone with the public key can verify it,
+    // proving authenticity and authorization of the transaction.
     signature: Signature,
 }
 
@@ -62,9 +64,14 @@ impl State {
 fn main() {
     // Setup Identities
     let mut csprng = rand::rngs::OsRng{};
+    // Key pairs. In a real system, these would be generated and stored securely by users, not in the code.
+    // SigningKey is the private key, who has it can sign transactions, meaning can spend the coin.
+    // VerifyingKey is the public key, which is used to verify signatures, and also serves as the identity/address in the ledger.
+    // Private for authorization, public for identity and verification.
     let god_private_key = SigningKey::generate(&mut csprng);
     let god_public_key = god_private_key.verifying_key();
 
+    // Initialize State with GOD's public key, giving GOD all the coins at birth.
     let mut wonderchain = State::new(god_public_key);
 
     // Create Signed Transaction
