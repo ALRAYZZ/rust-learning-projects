@@ -1,35 +1,53 @@
 use std::collections::HashMap;
-
+use ed25519_dalek::{Signature, Signer, SigningKey, Verifier, VerifyingKey};
 
 const UNIQUE_SUPPLY: u64 = 1000000;
 
+struct Transaction {
+    sender_public_key: VerifyingKey,
+    receiver_name: String,
+    amount: u64,
+    signature: Signature,
+}
+
+
 // Global Ledger
 struct State {
-    balances: HashMap<String, u64>
+    // Map public key (Authority) -> Balance
+    balances: HashMap<[u8; 32], u64> // Every key must be a 32-byte array (Ed25519 public key size)
 }
 
 impl State {
-    fn new() -> Self {
+    fn new(god_public_key: VerifyingKey) -> Self {
         let mut balances = HashMap::new();
         // Rule 1 - All coins exists at birth in GOD
-        balances.insert("GOD".to_string(), UNIQUE_SUPPLY);
+        balances.insert(god_public_key.to_bytes(), UNIQUE_SUPPLY);
 
 
         State { balances }
     }
 
-    // Simple test transfer
-    fn apply_transaction(&mut self, from: &str, to: &str, amount: u64) -> Result<(), String> {
-        let sender_balance = self.balances.get(from).unwrap_or(&0);
+    fn verify_and_apply_transaction(&mut self, tx: Transaction) -> Result<(), String> {
+        // Create message that was signed (amount + receiver)
+        let message = format!("{}{}", tx.amount, tx.receiver_name);
 
-        if *sender_balance < amount {
-            return Err("Insecure funds: God is not that generous today".to_string());
+        // Cryptographic Check: Did sender sign this?
+        tx.sender_public_key
+            .verify(message.as_bytes(), &tx.signature)
+            .map_err(|_| "Invalid signature".to_string())?;
+
+        // Balance check
+        let sender_bytes = tx.sender_public_key.to_bytes();
+        let sender_balance = self.balances.get(&sender_bytes).unwrap_or(&0);
+
+        if *sender_balance < tx.amount {
+            return Err("Insufficient balance".to_string());
         }
 
-        // Deduct and Add
-        // Ensures total supply invariant
-        *self.balances.entry(from.to_string()).or_insert(0) -= amount;
-        *self.balances.entry(to.to_string()).or_insert(0) += amount;
+        // Apply state change
+        *self.balances.get_mut(&sender_bytes).unwrap() -= tx.amount;
+        println!("Successfully moved {} to {}", tx.amount, tx.receiver_name);
+
 
         Ok(())
     }
@@ -37,14 +55,29 @@ impl State {
 
 
 fn main() {
-    let mut wonderchain = State::new();
-    println!("Initial GOD balance: {}", wonderchain.balances["GOD"]);
+    // Setup Identities
+    let mut csprng = rand::rngs::OsRng{};
+    let god_private_key = SigningKey::generate(&mut csprng);
+    let god_public_key = god_private_key.verifying_key();
 
-    // Try give Alice 100 coins
-    match wonderchain.apply_transaction("GOD", "Alice", 100) {
-        Ok(_) => println!("Transaction successful! Alice has received 100 coins."),
+    let mut wonderchain = State::new(god_public_key);
+
+    // Create Signed Transaction
+    let amount = 500;
+    let receiver = "ray".to_string();
+    let message = format!("{}{}", amount, receiver);
+    let signature = god_private_key.sign(message.as_bytes());
+
+    let tx = Transaction {
+        sender_public_key: god_public_key,
+        receiver_name: receiver,
+        amount,
+        signature
+    };
+
+    // Process
+    match wonderchain.verify_and_apply_transaction(tx) {
+        Ok(_) => println!("Transaction processed successfully!"),
         Err(e) => println!("Transaction failed: {}", e),
     }
-
-    println!("Final GOD balance: {}", wonderchain.balances["GOD"]);
 }
