@@ -1,8 +1,62 @@
 use std::collections::HashMap;
 use ed25519_dalek::{Signature, Signer, SigningKey, Verifier, VerifyingKey};
+use sha2::{Sha256, Digest};
+use std::fmt::Write;
 
 const UNIQUE_SUPPLY: u64 = 1000000;
 
+
+#[derive(Debug, Clone)]
+struct Block {
+    header: BlockHeader,
+    transactions: Vec<Transaction>,
+}
+
+#[derive(Debug, Clone)]
+struct BlockHeader {
+    previous_hash: String,
+    block_height: u64,
+    nonce: u32,
+    hash: String,
+}
+
+impl Block {
+    // Utility to calculate hash of the block data
+    fn calculate_hash(
+        previous_hash: &str,
+        block_height: u64,
+        nonce: u32,
+        transactions: &[Transaction],
+    ) -> String {
+        let mut hasher = Sha256::new();
+
+        // Hash header info + representation of transactions
+        let input = format!("{}{}{}{:?}", previous_hash, block_height, nonce, transactions);
+        hasher.update(input);
+
+        let result = hasher.finalize();
+        let mut s = String::new();
+        for byte in result {
+            write!(&mut s, "{:02x}", byte).expect("Unable to write");
+        }
+        s
+    }
+
+    fn new(previous_hash: String, block_height: u64, transactions: Vec<Transaction>) -> Block {
+        let hash = Self::calculate_hash(&previous_hash, block_height, 0, &transactions);
+        Block {
+            header: BlockHeader {
+                previous_hash,
+                block_height,
+                nonce: 0,
+                hash,
+            },
+            transactions,
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
 struct Transaction {
     sender_name: String,
     receiver_name: String,
