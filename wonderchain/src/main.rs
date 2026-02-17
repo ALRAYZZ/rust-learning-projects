@@ -6,6 +6,7 @@ const UNIQUE_SUPPLY: u64 = 1000000;
 struct Transaction {
     sender_name: String,
     receiver_name: String,
+    receiver_public_key: Option<VerifyingKey>,
     amount: u64,
     // Only private key-holder can produce signature, anyone with the public key can verify it,
     // proving authenticity and authorization of the transaction.
@@ -48,11 +49,18 @@ impl State {
             return Err("Insufficient balance!".to_string());
         }
 
+        // Handle receiver registration if needed
+        if !self.names.contains_key(&tx.receiver_name) {
+            // If account is new, we require public key to lock it
+            let new_key = tx.receiver_public_key
+                .ok_or("New accounts must provide a Public Key to register!")?;
+
+            self.names.insert(tx.receiver_name.clone(), new_key);
+            self.balances.insert(tx.sender_name.clone(), sender_balance);
+        }
+
         // Update state
         *self.balances.get_mut(&tx.sender_name).unwrap() -= tx.amount;
-
-        // If receiver does not exist, we create them
-        // We might requite separate Register Transaction
         *self.balances.entry(tx.receiver_name.clone()).or_insert(0) += tx.amount;
 
         Ok(())
@@ -62,7 +70,7 @@ impl State {
 
 fn main() {
     // Setup Identities
-    let mut csprng = rand::rngs::OsRng{};
+    let mut csprng = rand::rngs::OsRng;
     // Key pairs. In a real system, these would be generated and stored securely by users, not in the code.
     // SigningKey is the private key, who has it can sign transactions, meaning can spend the coin.
     // VerifyingKey is the public key, which is used to verify signatures, and also serves as the identity/address in the ledger.
@@ -72,6 +80,10 @@ fn main() {
     let god_private_key = SigningKey::generate(&mut csprng);
     let god_public_key = god_private_key.verifying_key();
     let mut wonderchain = State::new("GOD", god_public_key);
+
+    // Setup Ray
+    let ray_private_key = SigningKey::generate(&mut csprng);
+    let ray_public_key = ray_private_key.verifying_key();
 
     // Create Signed Transaction
     let amount = 500;
@@ -85,6 +97,7 @@ fn main() {
     let tx = Transaction {
         sender_name: sender,
         receiver_name: receiver,
+        receiver_public_key: Some(ray_public_key),
         amount,
         signature
     };
