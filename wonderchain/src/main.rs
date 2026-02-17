@@ -5,6 +5,52 @@ use std::fmt::Write;
 
 const UNIQUE_SUPPLY: u64 = 1000000;
 
+struct Blockchain {
+    chain: Vec<Block>,
+    state: State,
+}
+
+impl Blockchain {
+    fn new(god_name: &str, god_key: VerifyingKey) -> Self {
+        let state = State::new(god_name, god_key);
+        let mut blockchain = Blockchain {
+            chain: Vec::new(),
+            state,
+        };
+
+        // Create Genesis Block
+        let genesis_prev_hash = "0".repeat(64); // 64 hex chars for SHA-256
+        let genesis_block = Block::new(
+            genesis_prev_hash,
+            0,
+            Vec::new(), // No transactions in genesis block
+        );
+
+        blockchain.chain.push(genesis_block);
+        blockchain
+    }
+
+    fn add_transaction(&mut self, tx: Transaction) -> Result<(), String> {
+        // Try to apply it to our state
+        // Reach into self.state
+        self.state.process_transaction(tx.clone())?;
+
+        // If successful, we can add it to the latest block
+        let prev_hash = self.chain.last().unwrap().header.hash.clone();
+        let new_height = self.chain.len() as u64;
+
+        let new_block = Block::new(
+            prev_hash,
+            new_height,
+            vec![tx],
+        );
+
+        // Append to chain
+        self.chain.push(new_block);
+
+        Ok(())
+    }
+}
 
 #[derive(Debug, Clone)]
 struct Block {
@@ -133,37 +179,30 @@ fn main() {
     // Setup GOD
     let god_private_key = SigningKey::generate(&mut csprng);
     let god_public_key = god_private_key.verifying_key();
-    let mut wonderchain = State::new("GOD", god_public_key);
+
+    // Setup Chain
+    let mut wonderchain = Blockchain::new("GOD", god_public_key);
 
     // Setup Ray
     let ray_private_key = SigningKey::generate(&mut csprng);
     let ray_public_key = ray_private_key.verifying_key();
 
-    // Create Signed Transaction
-    let amount = 500;
-    let sender = "GOD".to_string();
-    let receiver = "ray".to_string();
-
-    // Message must include sender name to prevent replay attacks
-    let message = format!("{}{}{}", sender, receiver, amount);
-    let signature = god_private_key.sign(message.as_bytes());
-
+    // Create Transaction
     let tx = Transaction {
-        sender_name: sender,
-        receiver_name: receiver,
+        sender_name: "GOD".to_string(),
+        receiver_name: "ray".to_string(),
         receiver_public_key: Some(ray_public_key),
-        amount,
-        signature
+        amount: 500,
+        signature: god_private_key.sign(format!("{}{}{}", "GOD", "ray", 500).as_bytes()),
     };
 
     // Execute
-    match wonderchain.process_transaction(tx) {
+    match wonderchain.add_transaction(tx) {
         Ok(_) => {
-            println!("Transaction processed successfully!");
-            println!("God: {} | Alice: {}",
-            wonderchain.balances["GOD"],
-            wonderchain.balances["ray"]
-            );
+            println!("Block #1 Added!");
+            println!("New Block Hash: {}", wonderchain.chain.last().unwrap().header.hash);
+            println!("GOD Balance: {}", wonderchain.state.balances.get("GOD").unwrap());
+            println!("Ray Balance: {}", wonderchain.state.balances.get("ray").unwrap());
         },
         Err(e) => println!("Transaction failed: {}", e),
     }
